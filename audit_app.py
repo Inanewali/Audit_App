@@ -19,32 +19,67 @@ if uploaded_file:
         sheets = excel_obj.sheet_names
 
         default_loan  = sheets.index("Loans") if "Loans" in sheets else 0
-        default_staff = sheets.index("Staff") if "Staff" in sheets else min(1, len(sheets)-1)
+        default_staff = sheets.index("Staff") if "Staff" in sheets else min(1, len(sheets)-1) if len(sheets) > 1 else None
 
         loan_sheet  = st.selectbox("Select Loans Sheet",  sheets, index=default_loan)
-        staff_sheet = st.selectbox("Select Staff Sheet",  sheets, index=default_staff)
+        
+        # Optional staff sheet
+        include_staff = st.checkbox("Include Staff/Insider Loans", value=default_staff is not None)
+        staff_sheet = None
+        if include_staff:
+            staff_options = ["(None)"] + sheets
+            default_staff_idx = sheets.index(default_staff) + 1 if default_staff and default_staff in sheets else 1
+            staff_sheet = st.selectbox("Select Staff Sheet", staff_options, index=default_staff_idx)
+            if staff_sheet == "(None)":
+                staff_sheet = None
 
-        df = pd.read_excel(
-            uploaded_file, sheet_name=loan_sheet,
-            dtype={"ACCOUNT ID": str, "CUSTOMER": str}
-        )
+        df = pd.read_excel(uploaded_file, sheet_name=loan_sheet)
         df.columns = df.columns.str.strip()
 
-        staff_df = pd.read_excel(
-            uploaded_file, sheet_name=staff_sheet,
-            dtype={"ACCOUNT ID": str}
-        )
-        staff_df.columns = staff_df.columns.str.strip()
+        staff_df = None
+        if staff_sheet:
+            staff_df = pd.read_excel(uploaded_file, sheet_name=staff_sheet)
+            staff_df.columns = staff_df.columns.str.strip()
 
-        ID_COL    = "ACCOUNT ID"
-        AMT_COL   = "TOTAL OUTSTANDING"
-        TITLE_COL = "CUSTOMER NAME"
-
-        # Validate required columns exist
-        missing = [c for c in [ID_COL, AMT_COL, TITLE_COL] if c not in df.columns]
-        if missing:
-            st.error(f"Missing columns in Loans sheet: {missing}. Found: {df.columns.tolist()}")
-            st.stop()
+        # --- COLUMN SELECTION ---
+        st.markdown("### 🔧 Column Mapping")
+        st.info("Select which columns from your data correspond to these fields:")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            ID_COL = st.selectbox(
+                "Account/ID Column",
+                df.columns,
+                index=0,
+                help="Unique identifier for each loan/account"
+            )
+        
+        with col2:
+            AMT_COL = st.selectbox(
+                "Amount Column",
+                df.columns,
+                index=min(1, len(df.columns)-1),
+                help="The amount field to use for stratification"
+            )
+        
+        with col3:
+            TITLE_COL = st.selectbox(
+                "Name/Description Column",
+                df.columns,
+                index=min(2, len(df.columns)-1),
+                help="Customer name or other identifier"
+            )
+        
+        if staff_df is not None and len(staff_df.columns) > 0:
+            st.markdown("#### Staff Sheet ID Column")
+            STAFF_ID_COL = st.selectbox(
+                "Staff Sheet ID Column",
+                staff_df.columns,
+                help="The ID column in the staff sheet to match against loans"
+            )
+        else:
+            STAFF_ID_COL = ID_COL
 
         # Clean amount column
         df["Amt_Clean"] = pd.to_numeric(
@@ -58,9 +93,9 @@ if uploaded_file:
 
         # Show threshold info in sidebar now that data is loaded
         st.sidebar.markdown("---")
-        st.sidebar.metric("Highest Loan Balance", f"${max_value:,.2f}")
+        st.sidebar.metric("Highest Amount", f"${max_value:,.2f}")
         st.sidebar.metric("High Value Threshold (80%)", f"${high_val_threshold:,.2f}")
-        st.sidebar.caption("Threshold is automatically set to 80% of the highest loan balance in the population.")
+        st.sidebar.caption("Threshold is automatically set to 80% of the highest amount in the population.")
 
         # --- 4. SELECTION LOGIC ---
         # A. High Value Key Items
@@ -68,14 +103,18 @@ if uploaded_file:
         key_items["Selection_Reason"] = "High Value Key Item"
 
         # B. Staff / Insider Loans
-        insider_loans = df[df[ID_COL].isin(staff_df[ID_COL])].copy()
-        insider_loans["Selection_Reason"] = "Staff Loan"
+        if staff_df is not None and len(staff_df) > 0:
+            insider_loans = df[df[ID_COL].isin(staff_df[STAFF_ID_COL])].copy()
+            insider_loans["Selection_Reason"] = "Staff Loan"
+        else:
+            insider_loans = pd.DataFrame(columns=df.columns)
 
         # C. Random sample from remaining pool
-        picked_ids     = pd.concat([key_items, insider_loans])[ID_COL].unique()
+        combined = pd.concat([key_items, insider_loans]) if len(insider_loans) > 0 else key_items
+        picked_ids     = combined[ID_COL].unique()
         remaining_pool = df[~df[ID_COL].isin(picked_ids)].copy()
 
-        already_picked  = len(pd.concat([key_items, insider_loans]).drop_duplicates(subset=[ID_COL]))
+        already_picked  = len(combined.drop_duplicates(subset=[ID_COL]))
         n_random_needed = max(0, sample_size_target - already_picked)
         n_random_actual = min(len(remaining_pool), n_random_needed)
 
@@ -115,8 +154,10 @@ if uploaded_file:
         st.subheader("✍️ Digital Audit Workpaper")
         st.info("Review the sample below, then export to CSV to fill in your audit notes.")
 
-        # Build display DataFrame — kept separate from st.dataframe() which returns None
+        # Build display DataFrame with selected columns
         display_cols = [ID_COL, TITLE_COL, AMT_COL, "Selection_Reason", "Audit_Status", "Audit_Notes"]
+        # Only include columns that exist in final_output
+        display_cols = [col for col in display_cols if col in final_output.columns]
         export_df = final_output[display_cols].reset_index(drop=True)
 
         st.dataframe(export_df)
