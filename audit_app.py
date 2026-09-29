@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -115,15 +116,24 @@ st.title("🎯 Audit Sampling & Selection Tool")
 st.caption("Statistical sample sizes, reproducible selection, an editable workpaper and "
            "evaluation of results — AICPA *Audit Sampling* methodology.")
 
+DEMO_FILE = Path(__file__).resolve().parent / "sample_data" / "loan_population.xlsx"
+
 upload = st.file_uploader("Upload population (Excel or CSV)", type=["xlsx", "csv"])
-if not upload:
-    st.info("⬆️ Upload a population listing to begin. Each row should be one item with an ID "
-            "and an amount. Try `sample_data/loan_population.xlsx` from the repo.")
+use_demo = False
+if not upload and DEMO_FILE.exists():
+    use_demo = st.toggle("Use the demo loan population (synthetic data)",
+                         value=st.session_state.get("demo_default", False))
+if upload:
+    file_bytes, file_name = upload.getvalue(), upload.name
+elif use_demo:
+    file_bytes, file_name = DEMO_FILE.read_bytes(), DEMO_FILE.name
+else:
+    st.info("⬆️ Upload a population listing to begin — one row per item, with an ID and an "
+            "amount — or switch on the demo population above.")
     st.stop()
 
-file_bytes = upload.getvalue()
 try:
-    book = read_book(file_bytes, upload.name)
+    book = read_book(file_bytes, file_name)
 except Exception as e:  # noqa: BLE001 — show any read error to the user
     st.error(f"Couldn't read the file: {e}")
     st.stop()
@@ -257,7 +267,7 @@ for note in plan_notes:
 # --------------------------------------------------------------------------- #
 plan = {
     "Prepared": datetime.now().strftime("%Y-%m-%d %H:%M"),
-    "Source file": upload.name,
+    "Source file": file_name,
     "Population sheet": pop_sheet,
     "ID / amount / name columns": f"{id_col} / {amt_col} / {name_col}",
     "Method": method_label,
