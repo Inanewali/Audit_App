@@ -1,515 +1,466 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+"""Advanced Audit Sampling & Selection Tool (AAST) — Streamlit UI.
+
+All statistics live in sampling.py (unit tested). This file only handles input,
+display and export.
+"""
+
+import hashlib
+import io
+import json
 from datetime import datetime
-import math
 
-# --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Advanced Audit Sampling Tool", layout="wide")
-st.title("🎯 Advanced Audit Sampling & Selection Tool (AAST)")
-st.markdown("Professional-grade audit sampling with multiple methodologies, statistical analysis, and compliance documentation.")
+import pandas as pd
+import streamlit as st
 
-# --- 2. SIDEBAR - AUDIT PARAMETERS ---
-st.sidebar.header("⚙️ Audit Configuration")
+import sampling as s
 
-# Sampling Method Selection
-sampling_method = st.sidebar.radio(
-    "Sampling Method",
-    ["Stratified Random", "Monetary Unit Sampling (MUS)", "Attribute Sampling", "Systematic"],
-    help="Choose the appropriate statistical sampling method for your audit"
-)
+st.set_page_config(page_title="Audit Sampling Tool", page_icon="🎯", layout="wide")
 
-# Statistical Parameters
-st.sidebar.markdown("### Statistical Parameters")
+METHODS = {
+    "Stratified (key items + value strata)": "stratified",
+    "Monetary Unit Sampling (MUS)": "mus",
+    "Attribute sampling (controls)": "attribute",
+    "Systematic": "systematic",
+}
+RIA_OPTIONS = [0.05, 0.10, 0.15, 0.20, 0.25]
+STATUS_OPTIONS = ["Pending", "Tested – no exception", "Tested – exception", "Not testable"]
 
-confidence_level = st.sidebar.select_slider(
-    "Confidence Level",
-    options=[90, 95, 99],
-    value=95,
-    help="Higher confidence = larger sample size required"
-)
 
-risk_ia = st.sidebar.slider(
-    "Risk of Incorrect Acceptance (RIA)",
-    min_value=0.05,
-    max_value=0.25,
-    value=0.10,
-    step=0.01,
-    help="β risk: Probability of accepting an incorrect assertion (Type II error)"
-)
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+@st.cache_data(show_spinner=False)
+def read_book(data: bytes, name: str) -> dict[str, pd.DataFrame]:
+    if name.lower().endswith(".csv"):
+        return {"CSV": pd.read_csv(io.BytesIO(data))}
+    return pd.read_excel(io.BytesIO(data), sheet_name=None)
 
-risk_ir = st.sidebar.slider(
-    "Risk of Incorrect Rejection (RIR)",
-    min_value=0.01,
-    max_value=0.10,
-    value=0.05,
-    step=0.01,
-    help="α risk: Probability of rejecting a correct assertion (Type I error)"
-)
 
-# Materiality Settings
-st.sidebar.markdown("### Materiality & Error Tolerance")
+def guess(columns, keywords, fallback=0):
+    for kw in keywords:
+        for i, c in enumerate(columns):
+            if kw in str(c).lower():
+                return i
+    return min(fallback, len(columns) - 1)
 
-materiality_type = st.sidebar.radio(
-    "Materiality Basis",
-    ["Dollar Amount", "Percentage of Population"],
-    help="How to define the materiality threshold"
-)
 
-if materiality_type == "Dollar Amount":
-    materiality = st.sidebar.number_input(
-        "Materiality Threshold ($)",
-        min_value=0.0,
-        value=10000.0,
-        step=1000.0,
-        help="Maximum acceptable error amount"
-    )
+def pct(x):
+    return f"{x:.2%}"
+
+
+# --------------------------------------------------------------------------- #
+# Sidebar — parameters
+# --------------------------------------------------------------------------- #
+sb = st.sidebar
+sb.header("⚙️ Sampling parameters")
+method_label = sb.radio("Method", list(METHODS), help=(
+    "**Stratified** – substantive tests of balances; key items tested 100%, remainder "
+    "split into strata of equal value.\n\n**MUS** – substantive tests where overstatement "
+    "is the main risk; selection probability proportional to value.\n\n**Attribute** – "
+    "tests of controls; items picked at random regardless of value.\n\n**Systematic** – "
+    "every k-th item from a random start."))
+method = METHODS[method_label]
+
+ria = sb.select_slider("Confidence", RIA_OPTIONS, value=0.05,
+                       format_func=lambda r: f"{100 * (1 - r):.0f}% (RIA {r:.0%})",
+                       help="Risk of incorrect acceptance (RIA) = 1 − confidence.")
+cur = sb.text_input("Currency symbol", value="$", max_chars=4)
+
+
+def money(x):
+    return f"{cur}{x:,.2f}"
+
+
+monetary = method != "attribute"
+if monetary:
+    sb.markdown("### Materiality")
+    tm_basis = sb.radio("Tolerable misstatement basis", ["% of population value", "Amount"],
+                        horizontal=True)
+    if tm_basis == "Amount":
+        tm_amount = sb.number_input("Tolerable misstatement", min_value=0.0, value=10_000.0,
+                                    step=1_000.0, format="%.2f")
+    else:
+        tm_pct = sb.number_input("Tolerable misstatement (%)", 0.1, 20.0, 2.0, 0.1) / 100
+    em_share = sb.slider("Expected misstatement (% of tolerable)", 0, 60, 0, 5,
+                         help="Misstatement you expect to find. Larger values increase the "
+                              "sample size.") / 100
 else:
-    materiality_pct = st.sidebar.slider(
-        "Materiality Threshold (%)",
-        min_value=0.5,
-        max_value=10.0,
-        value=2.0,
-        step=0.5,
-        help="Materiality as % of total population value"
-    )
-    materiality = None
+    sb.markdown("### Deviation rates")
+    tdr = sb.number_input("Tolerable deviation rate (%)", 1.0, 20.0, 5.0, 0.5) / 100
+    edr = sb.number_input("Expected deviation rate (%)", 0.0, 10.0, 0.0, 0.25) / 100
 
-expected_error_rate = st.sidebar.slider(
-    "Expected Error Rate (%)",
-    min_value=0.0,
-    max_value=5.0,
-    value=0.5,
-    step=0.1,
-    help="Anticipated percentage of items with errors"
-)
+if method == "stratified":
+    sb.markdown("### Strata")
+    key_basis = sb.radio("Key item threshold", ["= tolerable misstatement", "Fixed amount",
+                                               "Top % of items"])
+    if key_basis == "Fixed amount":
+        key_amount = sb.number_input("Key item threshold amount", min_value=0.0,
+                                     value=100_000.0, step=10_000.0, format="%.2f")
+    elif key_basis == "Top % of items":
+        key_top = sb.slider("Top % of items by value", 1, 25, 5) / 100
+    n_strata = sb.slider("Strata for the remainder", 1, 6, 3)
 
-# Sample Size Constraints
-st.sidebar.markdown("### Sample Size Bounds")
-min_sample_size = st.sidebar.number_input("Minimum Sample Size", min_value=10, value=30, step=5)
-max_sample_size = st.sidebar.number_input("Maximum Sample Size", min_value=50, value=500, step=10)
+sb.markdown("### Selection")
+seed = int(sb.number_input("Random seed", min_value=0, value=20260929, step=1, help=(
+    "Recorded in the workpaper so the selection can be re-performed exactly. "
+    "Change it only to draw a different sample.")))
+override = sb.checkbox("Override calculated sample size")
+if override:
+    override_n = int(sb.number_input("Sample size", min_value=1, value=60, step=1))
 
-# --- 3. SAMPLE SIZE CALCULATION FORMULAS ---
-def calculate_z_score(confidence_level):
-    """Get z-score from confidence level"""
-    z_scores = {90: 1.645, 95: 1.96, 99: 2.576}
-    return z_scores.get(confidence_level, 1.96)
+# --------------------------------------------------------------------------- #
+# Data input
+# --------------------------------------------------------------------------- #
+st.title("🎯 Audit Sampling & Selection Tool")
+st.caption("Statistical sample sizes, reproducible selection, an editable workpaper and "
+           "evaluation of results — AICPA *Audit Sampling* methodology.")
 
-def calculate_sample_size_stratified(population_size, confidence_level, expected_error_rate, risk_ir, risk_ia):
-    """Calculate sample size for stratified sampling (AICPA Standard AU-C 530)"""
-    z_alpha = calculate_z_score(confidence_level)
-    z_beta = calculate_z_score(100 - (risk_ia * 100))
-    
-    p = expected_error_rate / 100
-    if p == 0:
-        p = 0.01  # Avoid division by zero
-    
-    # Cochran's formula for finite populations
-    n = ((z_alpha + z_beta) ** 2 * p * (1 - p)) / ((1 - 2*p) ** 2)
-    n = int(math.ceil(n))
-    
-    # Finite population correction
-    if population_size > 0:
-        n = int(math.ceil(n / (1 + (n / population_size))))
-    
-    return max(min_sample_size, min(int(n), max_sample_size))
+upload = st.file_uploader("Upload population (Excel or CSV)", type=["xlsx", "csv"])
+if not upload:
+    st.info("⬆️ Upload a population listing to begin. Each row should be one item with an ID "
+            "and an amount. Try `sample_data/loan_population.xlsx` from the repo.")
+    st.stop()
 
-def calculate_sample_size_mus(book_value, tolerable_error, risk_ir):
-    """Calculate sample size for Monetary Unit Sampling (MUS)"""
-    # MUS formula: Sample Size = Book Value × Factor / Tolerable Error
-    factor = calculate_z_score(100 - (risk_ir * 100))
-    sample_size = int(math.ceil((book_value * factor) / tolerable_error)) if tolerable_error > 0 else max_sample_size
-    return max(min_sample_size, min(sample_size, max_sample_size))
+file_bytes = upload.getvalue()
+try:
+    book = read_book(file_bytes, upload.name)
+except Exception as e:  # noqa: BLE001 — show any read error to the user
+    st.error(f"Couldn't read the file: {e}")
+    st.stop()
 
-def calculate_sample_size_attribute(population_size, confidence_level, expected_error_rate, risk_ir):
-    """Calculate sample size for Attribute Sampling"""
-    z_alpha = calculate_z_score(confidence_level)
-    p = expected_error_rate / 100
-    e = 0.05  # Acceptable deviation rate
-    
-    if e <= 0:
-        return max_sample_size
-    
-    n = ((z_alpha ** 2) * p * (1 - p)) / (e ** 2)
-    n = int(math.ceil(n))
-    
-    if population_size > 0:
-        n = int(math.ceil(n / (1 + (n / population_size))))
-    
-    return max(min_sample_size, min(int(n), max_sample_size))
+sheets = list(book)
+c1, c2 = st.columns(2)
+pop_sheet = c1.selectbox("Population sheet", sheets,
+                         index=sheets.index("Loans") if "Loans" in sheets else 0)
+staff_candidates = [x for x in sheets if x != pop_sheet]
+use_staff = c2.checkbox("Also select staff / insider items from another sheet",
+                        value="Staff" in staff_candidates, disabled=not staff_candidates)
 
-# --- 4. DATA LOADING ---
-uploaded_file = st.file_uploader("Upload Master Excel File", type=["xlsx"])
+raw = book[pop_sheet].copy()
+raw.columns = [str(c).strip() for c in raw.columns]
+cols = list(raw.columns)
 
-if uploaded_file:
-    try:
-        excel_obj = pd.ExcelFile(uploaded_file)
-        sheets = excel_obj.sheet_names
+st.markdown("#### Column mapping")
+m1, m2, m3 = st.columns(3)
+id_col = m1.selectbox("ID column", cols, index=guess(cols, ["account", "id", "no", "number"]))
+amt_col = m2.selectbox("Amount column", cols,
+                       index=guess(cols, ["outstanding", "balance", "amount", "amt", "value"], 1))
+name_col = m3.selectbox("Name / description column", cols,
+                        index=guess(cols, ["name", "customer", "description", "desc"], 2))
 
-        default_loan  = sheets.index("Loans") if "Loans" in sheets else 0
-        default_staff = sheets.index("Staff") if "Staff" in sheets else (min(1, len(sheets)-1) if len(sheets) > 1 else None)
+staff_ids = None
+if use_staff and staff_candidates:
+    s1, s2 = st.columns(2)
+    staff_sheet = s1.selectbox("Staff sheet", staff_candidates,
+                               index=staff_candidates.index("Staff")
+                               if "Staff" in staff_candidates else 0)
+    staff_df = book[staff_sheet]
+    staff_df.columns = [str(c).strip() for c in staff_df.columns]
+    staff_cols = list(staff_df.columns)
+    staff_id_col = s2.selectbox("Staff sheet ID column", staff_cols,
+                                index=guess(staff_cols, [id_col.lower(), "account", "id"]))
+    staff_ids = staff_df[staff_id_col]
 
-        # Sheet Selection
-        st.markdown("### 📋 Data Source Configuration")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            loan_sheet  = st.selectbox("Select Loans/Population Sheet", sheets, index=default_loan)
-        
-        with col2:
-            include_staff = st.checkbox("Include Staff/Insider Loans", value=default_staff is not None)
+# --------------------------------------------------------------------------- #
+# Clean + size + select
+# --------------------------------------------------------------------------- #
+cleaned = s.clean_population(raw, id_col, amt_col, name_col)
+pop, excluded = cleaned.population, cleaned.excluded
+if pop.empty:
+    st.error("No usable rows — check the ID and amount column mapping.")
+    st.stop()
 
-        df = pd.read_excel(uploaded_file, sheet_name=loan_sheet)
-        df.columns = df.columns.str.strip()
+N = len(pop)
+BV = pop[s.AMT].sum()
+dupes = pop[s.ID_KEY].duplicated(keep=False)
 
-        staff_df = None
-        if include_staff:
-            staff_options = ["(None)"] + sheets
-            default_staff_idx = sheets.index(default_staff) + 1 if default_staff and default_staff in sheets else 1
-            staff_sheet = st.selectbox("Select Staff Sheet", staff_options, index=default_staff_idx)
-            if staff_sheet != "(None)":
-                staff_df = pd.read_excel(uploaded_file, sheet_name=staff_sheet)
-                staff_df.columns = staff_df.columns.str.strip()
+if monetary:
+    tolerable = tm_amount if tm_basis == "Amount" else tm_pct * BV
+    expected = em_share * tolerable
+    if tolerable <= 0:
+        st.error("Set a tolerable misstatement greater than zero.")
+        st.stop()
 
-        # --- COLUMN SELECTION ---
-        st.markdown("### 🔧 Column Mapping")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            ID_COL = st.selectbox("Account/ID Column", df.columns, index=0)
-        
-        with col2:
-            AMT_COL = st.selectbox("Amount Column", df.columns, index=min(1, len(df.columns)-1))
-        
-        with col3:
-            TITLE_COL = st.selectbox("Name/Description Column", df.columns, index=min(2, len(df.columns)-1))
-        
-        STAFF_ID_COL = ID_COL
-        if staff_df is not None and len(staff_df.columns) > 0:
-            STAFF_ID_COL = st.selectbox("Staff Sheet ID Column", staff_df.columns, label_visibility="collapsed")
+strata_summary = None
+interval = None
+plan_notes = []
+try:
+    if method == "mus":
+        n_calc = s.mus_sample_size(BV, tolerable, ria, expected)
+        n = override_n if override else n_calc
+        sample, interval = s.mus_select(pop, n, seed)
+        eval_pop = pop
 
-        # Data Cleaning
-        df["Amt_Clean"] = pd.to_numeric(
-            df[AMT_COL].astype(str).str.replace(r"[\$,]", "", regex=True),
-            errors="coerce"
-        ).fillna(0)
-        
-        # Remove negative amounts
-        df = df[df["Amt_Clean"] >= 0].copy()
-        
-        population_size = len(df)
-        total_population_value = df["Amt_Clean"].sum()
-        max_value = df["Amt_Clean"].max()
-        min_value = df[df["Amt_Clean"] > 0]["Amt_Clean"].min() if len(df[df["Amt_Clean"] > 0]) > 0 else 0
+    elif method == "stratified":
+        if key_basis == "= tolerable misstatement":
+            key_threshold = tolerable
+        elif key_basis == "Fixed amount":
+            key_threshold = key_amount
+        else:
+            key_threshold = pop[s.AMT].quantile(1 - key_top)
+        pop = s.assign_strata(pop, key_threshold, n_strata)
+        rest_value = pop.loc[pop[s.STRATUM] != "Key", s.AMT].sum()
+        n_calc = s.mus_sample_size(rest_value, tolerable, ria, expected) if rest_value > 0 else 0
+        n = override_n if override else n_calc
+        sample, strata_summary = s.stratified_select(pop, n, key_threshold, n_strata, seed)
+        eval_pop = pop
+        plan_notes.append(f"Key item threshold {money(key_threshold)}; random sample of "
+                          f"{n} sized on remaining value {money(rest_value)}.")
 
-        # --- CALCULATE TOLERABLE ERROR ---
-        if materiality_type == "Percentage of Population" and materiality is None:
-            materiality = (materiality_pct / 100) * total_population_value
+    elif method == "systematic":
+        n_calc = min(s.mus_sample_size(BV, tolerable, ria, expected), N)
+        n = override_n if override else n_calc
+        sample, k = s.systematic_select(pop, n, seed)
+        eval_pop = pop
+        plan_notes.append(f"Interval {k:.2f} items from a random start (seed {seed}). "
+                          "Population order matters — sort deliberately before uploading.")
 
-        # --- DISPLAY POPULATION STATISTICS ---
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### Population Statistics")
-        st.sidebar.metric("Population Size", f"{population_size:,}")
-        st.sidebar.metric("Total Value", f"${total_population_value:,.2f}")
-        st.sidebar.metric("Max Item Value", f"${max_value:,.2f}")
-        st.sidebar.metric("Avg Item Value", f"${total_population_value/population_size:,.2f}" if population_size > 0 else "$0")
-        st.sidebar.metric("Materiality Threshold", f"${materiality:,.2f}")
+    else:  # attribute
+        n_calc = s.attribute_sample_size(tdr, edr, ria, N)
+        n = override_n if override else n_calc
+        sample = s.random_select(pop, n, seed, "Attribute")
+        eval_pop = pop
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
 
-        # --- CALCULATE SAMPLE SIZE ---
-        if sampling_method == "Stratified Random":
-            sample_size_target = calculate_sample_size_stratified(population_size, confidence_level, expected_error_rate, risk_ir, risk_ia)
-        elif sampling_method == "Monetary Unit Sampling (MUS)":
-            sample_size_target = calculate_sample_size_mus(total_population_value, materiality, risk_ir)
-        elif sampling_method == "Attribute Sampling":
-            sample_size_target = calculate_sample_size_attribute(population_size, confidence_level, expected_error_rate, risk_ir)
-        else:  # Systematic
-            sample_size_target = calculate_sample_size_stratified(population_size, confidence_level, expected_error_rate, risk_ir, risk_ia)
+if staff_ids is not None:
+    sample = s.combine(sample, s.insider_items(pop, staff_ids))
 
-        st.sidebar.metric("Calculated Sample Size", sample_size_target)
+if override:
+    plan_notes.append(f"Sample size overridden: calculated {n_calc}, used {n}.")
+if n > N and method != "stratified":
+    plan_notes.append("Calculated sample exceeds the population — consider testing 100%.")
 
-        # --- 5. SELECTION LOGIC BY METHOD ---
-        if sampling_method == "Stratified Random":
-            # High value threshold = 75th percentile
-            high_val_threshold = df["Amt_Clean"].quantile(0.75)
-            
-            key_items = df[df["Amt_Clean"] >= high_val_threshold].copy()
-            key_items["Selection_Reason"] = "High Value Stratum"
-            key_items["Sampling_Method"] = "Stratified"
+# --------------------------------------------------------------------------- #
+# Population summary strip
+# --------------------------------------------------------------------------- #
+a, b, c, d = st.columns(4)
+a.metric("Population items", f"{N:,}")
+b.metric("Population value", money(BV))
+c.metric("Sample items", f"{len(sample):,}")
+d.metric("Value covered", pct(sample[s.AMT].sum() / BV) if BV else "–")
 
-            # Staff loans
-            if staff_df is not None and len(staff_df) > 0:
-                insider_loans = df[df[ID_COL].isin(staff_df[STAFF_ID_COL])].copy()
-                insider_loans["Selection_Reason"] = "Staff/Insider"
-                insider_loans["Sampling_Method"] = "Stratified"
-            else:
-                insider_loans = pd.DataFrame(columns=df.columns)
+if len(excluded):
+    ex_val = excluded[s.AMT].fillna(0).abs().sum()
+    st.warning(f"{len(excluded)} row(s) excluded from the population "
+               f"({money(ex_val)} absolute value) — see the Population tab. "
+               "Credit balances and unparseable amounts need separate procedures.")
+if dupes.any():
+    st.warning(f"{dupes.sum()} rows share an ID with another row. They are treated as "
+               "separate items; check the ID column mapping if that's unexpected.")
+for note in plan_notes:
+    st.info(note)
 
-            # Random from remainder
-            combined = pd.concat([key_items, insider_loans]) if len(insider_loans) > 0 else key_items
-            picked_ids = combined[ID_COL].unique()
-            remaining_pool = df[~df[ID_COL].isin(picked_ids)].copy()
+# --------------------------------------------------------------------------- #
+# Plan record (used on screen and in the export)
+# --------------------------------------------------------------------------- #
+plan = {
+    "Prepared": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    "Source file": upload.name,
+    "Population sheet": pop_sheet,
+    "ID / amount / name columns": f"{id_col} / {amt_col} / {name_col}",
+    "Method": method_label,
+    "Confidence (1 − RIA)": pct(1 - ria),
+    "Population items": N,
+    "Population value": money(BV),
+    "Rows excluded": len(excluded),
+    "Calculated sample size": n_calc,
+    "Sample size used": n,
+    "Items selected (incl. targeted)": len(sample),
+    "Random seed": seed,
+}
+if monetary:
+    plan["Tolerable misstatement"] = money(tolerable)
+    plan["Expected misstatement"] = money(expected)
+    plan["Reliability factor"] = f"{s.reliability_factor(ria):.2f}"
+if interval:
+    plan["Sampling interval"] = money(interval)
+if method == "attribute":
+    plan["Tolerable deviation rate"] = pct(tdr)
+    plan["Expected deviation rate"] = pct(edr)
+if staff_ids is not None:
+    plan["Staff sheet"] = staff_sheet
+for i, note in enumerate(plan_notes, 1):
+    plan[f"Note {i}"] = note
+plan_df = pd.DataFrame({"Parameter": list(plan), "Value": [str(v) for v in plan.values()]})
 
-            already_picked = len(combined.drop_duplicates(subset=[ID_COL]))
-            n_random_needed = max(0, sample_size_target - already_picked)
-            n_random_actual = min(len(remaining_pool), n_random_needed)
+# --------------------------------------------------------------------------- #
+# Workpaper state — keyed on everything that determines the selection
+# --------------------------------------------------------------------------- #
+sig = hashlib.sha1(json.dumps([hashlib.sha1(file_bytes).hexdigest(), pop_sheet, id_col, amt_col,
+                               name_col, method, ria, n, seed,
+                               sorted(sample.index.tolist())],
+                              default=str).encode()).hexdigest()[:12]
 
-            if n_random_actual > 0:
-                random_samples = remaining_pool.sample(n=n_random_actual, random_state=42)
-                random_samples["Selection_Reason"] = "Random Sample"
-                random_samples["Sampling_Method"] = "Stratified"
-            else:
-                random_samples = pd.DataFrame(columns=df.columns)
-
-            final_output = pd.concat([key_items, insider_loans, random_samples]).drop_duplicates(subset=[ID_COL])
-
-        elif sampling_method == "Monetary Unit Sampling (MUS)":
-            # MUS: Cumulative probability sampling based on amount
-            df["Cumulative_Amount"] = df["Amt_Clean"].cumsum()
-            df["Cumulative_Pct"] = (df["Cumulative_Amount"] / total_population_value * 100) if total_population_value > 0 else 0
-            
-            # Select items across cumulative distribution
-            interval = total_population_value / sample_size_target if sample_size_target > 0 else 0
-            selected_indices = []
-            cumulative = 0
-            
-            for idx, row in df.iterrows():
-                if row["Amt_Clean"] > 0:
-                    cumulative += row["Amt_Clean"]
-                    if (cumulative // interval) > len(selected_indices):
-                        selected_indices.append(idx)
-                    
-                    if len(selected_indices) >= sample_size_target:
-                        break
-            
-            # Also include all items above 2x the interval (key items)
-            key_threshold = interval * 2
-            key_items = df[df["Amt_Clean"] >= key_threshold].copy()
-            
-            final_output = df.loc[selected_indices].copy()
-            final_output["Selection_Reason"] = "MUS Selection"
-            final_output["Sampling_Method"] = "MUS"
-            
-            # Add key items if not already selected
-            key_not_selected = key_items[~key_items[ID_COL].isin(final_output[ID_COL])]
-            if len(key_not_selected) > 0:
-                key_not_selected["Selection_Reason"] = "Key Item (>2x interval)"
-                key_not_selected["Sampling_Method"] = "MUS"
-                final_output = pd.concat([final_output, key_not_selected])
-            
-            final_output = final_output.drop_duplicates(subset=[ID_COL])
-
-        elif sampling_method == "Systematic":
-            # Systematic: Every kth item
-            k = max(1, population_size // sample_size_target)
-            start = np.random.randint(0, k)
-            systematic_indices = list(range(start, population_size, k))[:sample_size_target]
-            
-            final_output = df.iloc[systematic_indices].copy()
-            final_output["Selection_Reason"] = f"Systematic (k={k})"
-            final_output["Sampling_Method"] = "Systematic"
-
-        else:  # Attribute Sampling
-            # Similar to stratified but focused on high-risk items
-            high_risk_threshold = df["Amt_Clean"].quantile(0.80)
-            high_risk = df[df["Amt_Clean"] >= high_risk_threshold].copy()
-            high_risk["Selection_Reason"] = "High Risk Item"
-            high_risk["Sampling_Method"] = "Attribute"
-            
-            remaining = df[~df[ID_COL].isin(high_risk[ID_COL])].sample(
-                n=min(sample_size_target - len(high_risk), len(df) - len(high_risk)),
-                random_state=42
-            )
-            remaining["Selection_Reason"] = "Random Selection"
-            remaining["Sampling_Method"] = "Attribute"
-            
-            final_output = pd.concat([high_risk, remaining]).drop_duplicates(subset=[ID_COL])
-
-        # Add audit tracking columns
-        final_output["Audit_Status"] = "Pending"
-        final_output["Audit_Notes"] = ""
-        final_output["Tested_By"] = ""
-        final_output["Test_Date"] = ""
-        final_output["Error_Found"] = "No"
-        final_output["Error_Amount"] = 0.0
-
-        # --- 6. STATISTICAL ANALYSIS ---
-        total_sampled = len(final_output)
-        sampled_value = final_output["Amt_Clean"].sum()
-        coverage_pct = (total_sampled / population_size * 100) if population_size > 0 else 0
-        value_coverage_pct = (sampled_value / total_population_value * 100) if total_population_value > 0 else 0
-        
-        # Precision calculation
-        precision = materiality / 2 if materiality > 0 else 0
-        precision_pct = (precision / total_population_value * 100) if total_population_value > 0 else 0
-        
-        # --- 7. UI DISPLAY ---
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Sampling Plan", "🎯 Sample Details", "📈 Statistics", "📄 Workpaper"])
-        
-        with tab1:
-            st.write("### 📋 Audit Sampling Plan Summary")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Sampling Method", sampling_method.split("(")[0].strip())
-            col2.metric("Confidence Level", f"{confidence_level}%")
-            col3.metric("RIA", f"{risk_ia*100:.1f}%")
-            col4.metric("RIR", f"{risk_ir*100:.1f}%")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Population Size", f"{population_size:,}")
-            col2.metric("Sample Size", f"{total_sampled:,}")
-            col3.metric("Coverage %", f"{coverage_pct:.2f}%")
-            col4.metric("Materiality", f"${materiality:,.2f}")
-            
-            # Sampling Plan Details
-            st.markdown("#### Sampling Plan Details")
-            sampling_details = {
-                "Population Size": population_size,
-                "Total Population Value": f"${total_population_value:,.2f}",
-                "Sample Size (Calculated)": sample_size_target,
-                "Sample Size (Actual)": total_sampled,
-                "Sample Value": f"${sampled_value:,.2f}",
-                "Sampling Method": sampling_method,
-                "Confidence Level": f"{confidence_level}%",
-                "Risk of Incorrect Acceptance": f"{risk_ia*100:.2f}%",
-                "Risk of Incorrect Rejection": f"{risk_ir*100:.2f}%",
-                "Expected Error Rate": f"{expected_error_rate:.2f}%",
-                "Materiality Threshold": f"${materiality:,.2f}",
-                "Precision": f"${precision:,.2f}",
-                "Sampling Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            st.dataframe(pd.DataFrame(sampling_details.items(), columns=["Parameter", "Value"]), hide_index=True, use_container_width=True)
-        
-        with tab2:
-            st.write("### 📋 Sample Items Details")
-            
-            # Build display dataframe
-            display_cols = [ID_COL, TITLE_COL, AMT_COL, "Selection_Reason", "Sampling_Method"]
-            display_cols = [col for col in display_cols if col in final_output.columns]
-            display_df = final_output[display_cols].reset_index(drop=True)
-            display_df.index = display_df.index + 1  # 1-based indexing
-            
-            st.dataframe(display_df, use_container_width=True)
-            
-            # Summary by selection reason
-            st.markdown("#### Selection Breakdown")
-            reason_summary = final_output["Selection_Reason"].value_counts().to_frame().rename(columns={"Selection_Reason": "Count"})
-            st.dataframe(reason_summary, use_container_width=True)
-        
-        with tab3:
-            st.write("### 📈 Statistical Analysis")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### Sample Composition")
-                stats_data = {
-                    "Metric": [
-                        "Population Count",
-                        "Sample Count",
-                        "Sample %",
-                        "Population Value",
-                        "Sample Value",
-                        "Value %"
-                    ],
-                    "Value": [
-                        f"{population_size:,}",
-                        f"{total_sampled:,}",
-                        f"{coverage_pct:.2f}%",
-                        f"${total_population_value:,.2f}",
-                        f"${sampled_value:,.2f}",
-                        f"{value_coverage_pct:.2f}%"
-                    ]
-                }
-                st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
-            
-            with col2:
-                st.markdown("#### Risk Assessment")
-                risk_data = {
-                    "Risk Factor": [
-                        "Risk of Incorrect Acceptance",
-                        "Risk of Incorrect Rejection",
-                        "Expected Error Rate",
-                        "Materiality %",
-                        "Precision %"
-                    ],
-                    "Value": [
-                        f"{risk_ia*100:.2f}%",
-                        f"{risk_ir*100:.2f}%",
-                        f"{expected_error_rate:.2f}%",
-                        f"{(materiality/total_population_value*100):.2f}%" if total_population_value > 0 else "0%",
-                        f"{precision_pct:.2f}%"
-                    ]
-                }
-                st.dataframe(pd.DataFrame(risk_data), hide_index=True, use_container_width=True)
-            
-            # Distribution analysis
-            st.markdown("#### Sample Distribution by Value")
-            
-            def get_amount_quantile(df, amt_col):
-                return {
-                    "Minimum": df[amt_col].min(),
-                    "Q1 (25%)": df[amt_col].quantile(0.25),
-                    "Median": df[amt_col].quantile(0.50),
-                    "Q3 (75%)": df[amt_col].quantile(0.75),
-                    "Maximum": df[amt_col].max()
-                }
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Population Distribution**")
-                pop_dist = get_amount_quantile(df, "Amt_Clean")
-                for k, v in pop_dist.items():
-                    st.text(f"{k}: ${v:,.2f}")
-            
-            with col2:
-                st.markdown("**Sample Distribution**")
-                sample_dist = get_amount_quantile(final_output, "Amt_Clean")
-                for k, v in sample_dist.items():
-                    st.text(f"{k}: ${v:,.2f}")
-        
-        with tab4:
-            st.write("### ✍️ Digital Audit Workpaper")
-            
-            # Export-ready workpaper
-            workpaper_cols = [ID_COL, TITLE_COL, AMT_COL, "Selection_Reason", "Sampling_Method", 
-                            "Audit_Status", "Error_Found", "Error_Amount", "Tested_By", "Test_Date", "Audit_Notes"]
-            workpaper_cols = [col for col in workpaper_cols if col in final_output.columns]
-            export_df = final_output[workpaper_cols].copy()
-            export_df.index = export_df.index + 1
-            
-            st.dataframe(export_df, use_container_width=True)
-            
-            # Export buttons
-            csv_data = export_df.to_csv().encode("utf-8")
-            st.download_button(
-                label="📥 Export Workpaper to CSV",
-                data=csv_data,
-                file_name=f"Audit_Workpaper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-            
-            xlsx_buffer = pd.ExcelWriter('audit_workpaper.xlsx', engine='openpyxl')
-            export_df.to_excel(xlsx_buffer, sheet_name='Sample Items')
-            
-            # Add summary sheet
-            summary_df = pd.DataFrame(sampling_details.items(), columns=["Parameter", "Value"])
-            summary_df.to_excel(xlsx_buffer, sheet_name='Sampling Plan', index=False)
-            
-            xlsx_buffer.close()
-            
-            with open('audit_workpaper.xlsx', 'rb') as f:
-                st.download_button(
-                    label="📊 Export to Excel with Summary",
-                    data=f.read(),
-                    file_name=f"Audit_Workpaper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-    except Exception as e:
-        st.error(f"❌ Error processing file: {e}")
-        st.exception(e)
-
+base = pd.DataFrame({
+    "ID": sample[id_col].values,
+    "Name": sample[name_col].values,
+    "Book_Value": sample[s.AMT].values,
+    "Selection_Reason": sample[s.REASON].values,
+    "Stratum": sample[s.STRATUM].values if s.STRATUM in sample else "",
+    "Audit_Status": "Pending",
+    "Audited_Value": pd.Series([None] * len(sample), dtype="float64").values,
+    "Deviation": False,
+    "Tested_By": "",
+    "Test_Date": pd.Series([pd.NaT] * len(sample), dtype="datetime64[ns]").values,
+    "Audit_Notes": "",
+}, index=sample.index)
+if method == "mus":
+    base.insert(4, "MUS_Hits", sample[s.HITS].values)
+if method != "stratified":
+    base = base.drop(columns="Stratum")
+if monetary:
+    base = base.drop(columns="Deviation")
 else:
-    st.info("⬆️ Upload the Excel file to begin your audit sampling process.")
+    base = base.drop(columns="Audited_Value")
+
+resume_key = f"resume_{sig}"
+if resume_key in st.session_state:
+    prior = st.session_state[resume_key]
+    by_id = prior.set_index(s.normalize_ids(prior["ID"]))
+    ids = s.normalize_ids(base["ID"])
+    for col in ["Audit_Status", "Audited_Value", "Deviation", "Tested_By", "Test_Date",
+                "Audit_Notes"]:
+        if col in base and col in by_id:
+            vals = ids.map(by_id[col][~by_id.index.duplicated()])
+            base[col] = vals.where(vals.notna(), base[col]).astype(base[col].dtype)
+
+# --------------------------------------------------------------------------- #
+# Tabs
+# --------------------------------------------------------------------------- #
+t_plan, t_wp, t_eval, t_pop = st.tabs(["📋 Plan", "✍️ Workpaper", "✅ Evaluate", "📊 Population"])
+
+with t_plan:
+    st.dataframe(plan_df, hide_index=True, width="stretch")
+    if strata_summary is not None and len(strata_summary):
+        st.markdown("#### Strata")
+        st.dataframe(strata_summary.style.format(
+            {"Value": money, "Lower": money, "Upper": money}), hide_index=True,
+            width="stretch")
+    st.markdown("#### Selection breakdown")
+    st.dataframe(sample[s.REASON].value_counts().rename("Items"), width="stretch")
+
+with t_wp:
+    st.caption("Record results here. Changing any parameter or the seed redraws the "
+               "sample and clears these entries — export first, then re-upload below to resume.")
+    with st.expander("Resume from an exported workpaper"):
+        prev = st.file_uploader("Exported workpaper (.xlsx or .csv)", type=["xlsx", "csv"],
+                                key="resume_upload")
+        if prev is not None and st.button("Load results into this workpaper"):
+            prior = (pd.read_csv(prev) if prev.name.endswith(".csv")
+                     else pd.read_excel(prev, sheet_name="Workpaper"))
+            if "Test_Date" in prior:
+                prior["Test_Date"] = pd.to_datetime(prior["Test_Date"], errors="coerce")
+            st.session_state[resume_key] = prior
+            st.rerun()
+
+    col_cfg = {
+        "ID": st.column_config.TextColumn(disabled=True),
+        "Name": st.column_config.TextColumn(disabled=True),
+        "Book_Value": st.column_config.NumberColumn("Book value", disabled=True, format="%.2f"),
+        "Selection_Reason": st.column_config.TextColumn("Selection reason", disabled=True),
+        "Stratum": st.column_config.TextColumn(disabled=True),
+        "MUS_Hits": st.column_config.NumberColumn("Hits", disabled=True),
+        "Audit_Status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS,
+                                                         required=True),
+        "Audited_Value": st.column_config.NumberColumn(
+            "Audited value", format="%.2f",
+            help="Value supported by audit evidence. Misstatement = book − audited."),
+        "Deviation": st.column_config.CheckboxColumn("Deviation?"),
+        "Tested_By": st.column_config.TextColumn("Tested by"),
+        "Test_Date": st.column_config.DateColumn("Test date"),
+        "Audit_Notes": st.column_config.TextColumn("Notes", width="large"),
+    }
+    wp = st.data_editor(base, key=f"editor_{sig}", column_config=col_cfg, hide_index=True,
+                        width="stretch", num_rows="fixed")
+
+    wp_out = wp.copy()
+    if monetary:
+        wp_out["Misstatement"] = (wp_out["Book_Value"] - wp_out["Audited_Value"]).where(
+            wp_out["Audited_Value"].notna())
+    wp_out["Test_Date"] = pd.to_datetime(wp_out["Test_Date"]).dt.date
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    xbuf = io.BytesIO()
+    with pd.ExcelWriter(xbuf, engine="openpyxl") as xw:
+        wp_out.to_excel(xw, sheet_name="Workpaper", index=False)
+        plan_df.to_excel(xw, sheet_name="Sampling Plan", index=False)
+        if strata_summary is not None and len(strata_summary):
+            strata_summary.to_excel(xw, sheet_name="Strata", index=False)
+        if len(excluded):
+            excluded.drop(columns=[s.ID_KEY]).to_excel(xw, sheet_name="Excluded Items",
+                                                       index=False)
+    e1, e2 = st.columns(2)
+    e1.download_button("📊 Download Excel workpaper", xbuf.getvalue(),
+                       file_name=f"Audit_Workpaper_{stamp}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       width="stretch")
+    e2.download_button("📥 Download CSV", wp_out.to_csv(index=False).encode("utf-8"),
+                       file_name=f"Audit_Workpaper_{stamp}.csv", mime="text/csv",
+                       width="stretch")
+
+with t_eval:
+    done_mask = wp["Audit_Status"].isin(["Tested – no exception", "Tested – exception"])
+    if monetary:
+        done_mask &= wp["Audited_Value"].notna()
+    done, total = int(done_mask.sum()), len(wp)
+    st.progress(done / total if total else 0.0, text=f"{done} of {total} items tested")
+
+    preview = False
+    if done < total:
+        preview = st.checkbox("Preview anyway, treating untested items as correct",
+                              help="For a quick look only — not a basis for a conclusion.")
+    if done == total or preview:
+        targeted = wp["Selection_Reason"] == "Staff / insider (targeted)"
+        if method == "attribute":
+            stat = wp[~targeted]
+            devs = int((stat["Deviation"] & done_mask[~targeted]).sum())
+            ev = s.evaluate_attribute(len(stat), devs, ria, tdr)
+        else:
+            ev_sample = sample.copy()
+            ev_sample["Err"] = (wp["Book_Value"] - wp["Audited_Value"]).fillna(0.0)
+            ev_sample = ev_sample[~targeted]  # targeted items are concluded on separately
+            if method == "mus":
+                ev = s.evaluate_mus(ev_sample, "Err", interval, ria, tolerable)
+            elif method == "stratified":
+                ev = s.evaluate_ratio(ev_sample, eval_pop, "Err", tolerable, s.STRATUM)
+            else:
+                ev = s.evaluate_ratio(ev_sample, eval_pop, "Err", tolerable)
+
+        (st.success if ev.supports else st.error)(ev.conclusion)
+        if preview:
+            st.warning("Preview — untested items were treated as correct.")
+        def show(key, val):
+            if isinstance(val, int):
+                return f"{val:,}"
+            if method == "attribute":
+                return pct(val)
+            return money(val)
+
+        fig = pd.DataFrame({"Measure": list(ev.figures),
+                            "Value": [show(k, v) for k, v in ev.figures.items()]})
+        st.dataframe(fig, hide_index=True, width="stretch")
+        if ev.detail is not None and len(ev.detail):
+            st.markdown("#### Detail")
+            st.dataframe(ev.detail, hide_index=True, width="stretch")
+        if targeted.any():
+            st.markdown("#### Staff / insider items (targeted, not projected)")
+            st.caption("Selected judgmentally, so they are excluded from the statistical "
+                       "evaluation above — conclude on them separately.")
+            show_cols = ["ID", "Name", "Book_Value", "Audit_Status"] + (
+                ["Audited_Value"] if monetary else ["Deviation"]) + ["Audit_Notes"]
+            st.dataframe(wp.loc[targeted, show_cols], hide_index=True, width="stretch")
+    else:
+        st.info("Finish recording results in the Workpaper tab to evaluate the sample.")
+
+with t_pop:
+    q = pop[s.AMT].quantile([0, .25, .5, .75, 1]).to_list()
+    qs = sample[s.AMT].quantile([0, .25, .5, .75, 1]).to_list()
+    dist = pd.DataFrame({"Statistic": ["Minimum", "Q1", "Median", "Q3", "Maximum"],
+                         "Population": [money(v) for v in q],
+                         "Sample": [money(v) for v in qs]})
+    st.dataframe(dist, hide_index=True, width="stretch")
+    if len(excluded):
+        st.markdown(f"#### Excluded rows ({len(excluded)})")
+        st.dataframe(excluded.drop(columns=[s.ID_KEY]), width="stretch")
