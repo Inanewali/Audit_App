@@ -7,6 +7,8 @@ is done.
 
 ![tests](https://github.com/Inanewali/Audit_App/actions/workflows/tests.yml/badge.svg)
 
+**Try it in your browser:** [inanewali.github.io/Audit_App](https://inanewali.github.io/Audit_App/) — opens on a synthetic loan book; files you upload stay on your machine.
+
 ## What it does
 
 1. **Load a population** — Excel or CSV. Pick the sheet and map the ID, amount and
@@ -58,6 +60,14 @@ few credit balances. Regenerate it with `python scripts/make_sample_data.py`.
 this repo with main file `audit_app.py`. Exports are built in memory, so users of a
 shared deployment never see each other's files.
 
+## Browser edition
+
+`web/index.html` is a single-file JavaScript port of the same methods, published with
+GitHub Pages from the `gh-pages` branch. It needs no server: uploads are read in the
+visitor's browser and never leave it. Its sample sizes and limits match `sampling.py`;
+its random draws differ for the same seed because the generators differ. To publish a
+change, copy `web/index.html` to `index.html` on `gh-pages` and push.
+
 ## Tests
 
 ```bash
@@ -74,6 +84,7 @@ interface.
 audit_app.py              Streamlit UI
 sampling.py               cleaning, sample sizes, selection, evaluation
 tests/test_sampling.py    unit tests (AICPA table values, reproducibility, edge cases)
+web/index.html            browser edition (published to GitHub Pages)
 sample_data/              synthetic demo population
 scripts/make_sample_data.py
 ```

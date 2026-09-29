@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Audit sampling in the browser: stratified, MUS, attribute and systematic samples with AICPA-based sizing and evaluation.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f5f8b'/%3E%3Cpath d='M8 17l5 5 11-12' stroke='white' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<title>Audit Sampling Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: working-paper tool — parameter rail on the left, results sheet on the right; stacks on phones */
+:root {
+  --bg: #f3f5f7; --panel: #ffffff; --fg: #17202a; --muted: #5b6875; --line: #d6dde4;
+  --accent: #1f5f8b; --accent-soft: #e3eef6; --ok: #1d7a4f; --ok-soft: #e2f3ea;
+  --bad: #b3261e; --bad-soft: #fbe7e5; --warn: #8a5a00; --warn-soft: #fbf0d9;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161b; --panel: #182028; --fg: #e5eaef; --muted: #98a5b2; --line: #2b3641;
+  --accent: #7cb7e0; --accent-soft: #1d3346; --ok: #6ccf9c; --ok-soft: #173427;
+  --bad: #f2877e; --bad-soft: #3c1d1b; --warn: #e6b85c; --warn-soft: #3a2e14; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161b; --panel: #182028; --fg: #e5eaef; --muted: #98a5b2; --line: #2b3641;
+  --accent: #7cb7e0; --accent-soft: #1d3346; --ok: #6ccf9c; --ok-soft: #173427;
+  --bad: #f2877e; --bad-soft: #3c1d1b; --warn: #e6b85c; --warn-soft: #3a2e14; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--body); padding-inline: 16px; padding-block: 20px 40px }
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 20px; align-items: start }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr) } }
+header.top { max-width: 1280px; margin: 0 auto 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between }
+h1 { font: 600 24px/1.2 var(--display); margin: 0; text-wrap: balance }
+.sub { color: var(--muted); margin: 0; max-width: 70ch }
+aside, .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 6px }
+aside { padding: 16px; display: grid; gap: 14px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px) }
+@media (max-width: 860px) { aside { position: static } }
+.group { display: grid; gap: 8px }
+.label { font: 600 11px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+label.f { display: grid; gap: 4px; font-size: 13px }
+input[type=number], input[type=text], select { width: 100%; font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px }
+.seg button { font: 500 12px var(--body); padding: 7px 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 4px; cursor: pointer; text-align: left }
+.seg button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--fg) }
+.seg button small { display: block; color: var(--muted); font-size: 11px; font-weight: 400 }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.hint { font-size: 12px; color: var(--muted); margin: 0 }
+.btn { font: 500 13px var(--body); padding: 7px 12px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: var(--panel); cursor: pointer }
+.btn.ghost { background: transparent; color: var(--accent) }
+.src { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.src .name { font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere }
+main { display: grid; gap: 16px; min-width: 0 }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+@media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+.kpi { background: var(--panel); padding: 12px 14px; display: grid; gap: 2px; min-width: 0 }
+.kpi .v { font: 500 18px/1.2 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+.notes { display: grid; gap: 6px }
+.note { padding: 8px 12px; border-radius: 4px; font-size: 13px; background: var(--accent-soft) }
+.note.warn { background: var(--warn-soft); color: var(--fg); border-left: 3px solid var(--warn) }
+.note.err { background: var(--bad-soft); border-left: 3px solid var(--bad) }
+.sheet { min-width: 0 }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); padding: 0 8px; overflow-x: auto }
+.tabs button { font: 500 13px var(--body); background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 10px 12px; cursor: pointer; white-space: nowrap }
+.tabs button[aria-selected=true] { color: var(--fg); border-bottom-color: var(--accent) }
+.pane { padding: 16px; display: grid; gap: 14px; min-width: 0 }
+h2 { font: 600 15px/1.3 var(--display); margin: 0 }
+.tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px }
+table { border-collapse: collapse; width: 100%; font-size: 13px }
+th { font: 600 11px var(--display); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 8px 10px; background: var(--bg); border-bottom: 1px solid var(--line); white-space: nowrap; position: sticky; top: 0 }
+td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: middle }
+tr:last-child td { border-bottom: 0 }
+td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap }
+td.id { font-family: var(--mono); font-size: 12px; white-space: nowrap }
+.kv td:first-child { color: var(--muted); width: 45% }
+.wp { max-height: 540px; overflow: auto }
+.wp input, .wp select { padding: 4px 6px; font-size: 12px; min-width: 110px }
+.wp input.note-in { min-width: 180px }
+.pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--accent-soft); white-space: nowrap }
+.pill.key { background: var(--warn-soft) }
+.pill.staff { background: var(--bad-soft) }
+tr.exc td { background: var(--bad-soft) }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden }
+.bar > i { display: block; height: 100%; background: var(--accent) }
+.verdict { padding: 14px 16px; border-radius: 6px; border-left: 4px solid; font-size: 14px }
+.verdict.ok { background: var(--ok-soft); border-color: var(--ok) }
+.verdict.no { background: var(--bad-soft); border-color: var(--bad) }
+.verdict b { font-family: var(--display); letter-spacing: .02em }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.foot { max-width: 1280px; margin: 16px auto 0; color: var(--muted); font-size: 12px }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px }
+.grid2 > * { min-width: 0 }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+</head>
+<body>
+
+
+<header class="top">
+  <div>
+    <h1>Audit Sampling &amp; Selection Tool</h1>
+    <p class="sub">Browser edition of <a href="https://github.com/Inanewali/Audit_App" style="color:var(--accent);font-family:var(--mono)">Inanewali/Audit_App</a>. It opens on a synthetic loan book; upload your own .xlsx or .csv to try real listings. Nothing leaves your browser.</p>
+  </div>
+</header>
+
+<div class="wrap">
+<aside>
+  <div class="group">
+    <span class="label">Population</span>
+    <div class="src">
+      <label class="btn ghost" for="file" style="cursor:pointer">Upload file</label>
+      <input id="file" type="file" accept=".xlsx,.xls,.csv" hidden>
+      <button class="btn ghost" id="demoBtn" type="button">Demo data</button>
+    </div>
+    <span class="name" id="srcName"></span>
+    <label class="f" id="sheetWrap" hidden>Sheet<select id="sheet"></select></label>
+    <div class="row2">
+      <label class="f">ID column<select id="colId"></select></label>
+      <label class="f">Amount column<select id="colAmt"></select></label>
+    </div>
+    <label class="f">Name column<select id="colName"></select></label>
+    <label class="f" id="staffWrap">Staff / insider IDs (targeted)<select id="staffSrc"></select></label>
+  </div>
+
+  <div class="group">
+    <span class="label">Method</span>
+    <div class="seg" id="method">
+      <button type="button" data-v="stratified" aria-pressed="true">Stratified<small>Balances</small></button>
+      <button type="button" data-v="mus" aria-pressed="false">MUS<small>Overstatement</small></button>
+      <button type="button" data-v="attribute" aria-pressed="false">Attribute<small>Controls</small></button>
+      <button type="button" data-v="systematic" aria-pressed="false">Systematic<small>Every k-th</small></button>
+    </div>
+  </div>
+
+  <div class="group">
+    <span class="label">Risk &amp; materiality</span>
+    <label class="f">Confidence
+      <select id="ria">
+        <option value="0.05" selected>95% (RIA 5%)</option><option value="0.10">90% (RIA 10%)</option>
+        <option value="0.15">85% (RIA 15%)</option><option value="0.20">80% (RIA 20%)</option><option value="0.25">75% (RIA 25%)</option>
+      </select></label>
+    <div id="monetaryBox" class="group">
+      <div class="row2">
+        <label class="f">Tolerable basis<select id="tmBasis"><option value="pct">% of value</option><option value="amt">Amount</option></select></label>
+        <label class="f"><span id="tmLabel">Tolerable %</span><input id="tm" type="number" value="2" step="0.1" min="0"></label>
+      </div>
+      <label class="f">Expected misstatement (% of tolerable)<input id="em" type="number" value="0" min="0" max="60" step="5"></label>
+    </div>
+    <div id="attrBox" class="row2" hidden>
+      <label class="f">Tolerable rate %<input id="tdr" type="number" value="5" min="1" max="20" step="0.5"></label>
+      <label class="f">Expected rate %<input id="edr" type="number" value="0" min="0" max="10" step="0.25"></label>
+    </div>
+    <div id="strataBox" class="group">
+      <div class="row2">
+        <label class="f">Key item threshold<select id="keyBasis"><option value="tm">= tolerable</option><option value="amt">Amount</option><option value="top">Top %</option></select></label>
+        <label class="f" id="keyValWrap" hidden><span id="keyValLabel">Value</span><input id="keyVal" type="number" value="5" min="0"></label>
+      </div>
+      <label class="f">Strata for remainder<input id="strata" type="number" value="3" min="1" max="6"></label>
+    </div>
+  </div>
+
+  <div class="group">
+    <span class="label">Selection</span>
+    <div class="row2">
+      <label class="f">Random seed<input id="seed" type="number" value="20260929" min="0"></label>
+      <label class="f">Size override<input id="override" type="number" min="1" placeholder="auto"></label>
+    </div>
+    <p class="hint">The seed is recorded in the plan so a reviewer can re-perform the draw.</p>
+  </div>
+</aside>
+
+<main>
+  <div class="kpis">
+    <div class="kpi"><span class="label">Population items</span><span class="v" id="kN">–</span></div>
+    <div class="kpi"><span class="label">Population value</span><span class="v" id="kBV">–</span></div>
+    <div class="kpi"><span class="label">Sample items</span><span class="v" id="kn">–</span></div>
+    <div class="kpi"><span class="label">Value covered</span><span class="v" id="kCov">–</span></div>
+  </div>
+  <div class="notes" id="notes"></div>
+  <section class="sheet">
+    <div class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-t="plan" aria-selected="true">Plan</button>
+      <button role="tab" data-t="wp" aria-selected="false">Workpaper</button>
+      <button role="tab" data-t="eval" aria-selected="false">Evaluate</button>
+      <button role="tab" data-t="pop" aria-selected="false">Population</button>
+    </div>
+    <div class="pane" id="pane-plan"></div>
+    <div class="pane" id="pane-wp" hidden></div>
+    <div class="pane" id="pane-eval" hidden></div>
+    <div class="pane" id="pane-pop" hidden></div>
+  </section>
+</main>
+</div>
+<p class="foot">Methods follow the AICPA Audit Guide <i>Audit Sampling</i>: Poisson reliability factors for MUS and stratified sizing, binomial limits for attribute sampling. Draws use a seeded generator in the browser, so they differ from the Python app's draws for the same seed.</p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const DEMO = {"cols":["ACCOUNT ID","CUSTOMER NAME","TOTAL OUTSTANDING","BRANCH"],"rows":[["3147865070","Evergreen Foods Ltd",768083.61,"Main"],["3218782677","Northwind Agro Ltd",700817.86,"East"],["3640122853","Riverbend Printing Ltd",2872432.86,"South"],["3424101866","Bluefield Steel Ltd",811266.33,"South"],["3766309155","Prairie Steel Ltd",14192952.56,"North"],["3189725112","Evergreen Holdings Ltd",273232.72,"East"],["3681784492","Prairie Motors Ltd",166800.3,"South"],["3538431844","Granite Foods Ltd",11487532.51,"East"],["3114904250","Lakeside Agro Ltd",-6085.848100000001,"East"],["3322586329","Bluefield Logistics Ltd",11661364.44,"South"],["3669790582","Cedar Packaging Ltd",4914950.16,"East"],["3761384972","Granite Packaging Ltd",136906.4,"North"],["3128311906","Harbor Agro Ltd",453519.38,"South"],["3580990783","Silverline Holdings Ltd",1301341.93,"East"],["3953753131","Bluefield Pharma Ltd",845170.1,"Main"],["3910866179","Prairie Holdings Ltd",1952467.43,"North"],["3926534034","Prairie Printing Ltd",451354.43,"Main"],["3101835574","Maple Steel Ltd",1049803.79,"South"],["3267419328","Cedar Logistics Ltd",5970708.15,"North"],["3217265243","Cedar Foods Ltd",10146794.27,"Main"],["3406418077","Evergreen Pharma Ltd",339737.73,"Main"],["3780318999","Bluefield Printing Ltd",829720.05,"South"],["3868593379","Harbor Agro Ltd",981797.68,"North"],["3177108077","Evergreen Traders Ltd",138722.98,"East"],["3222346952","Maple Printing Ltd",5393939.8,"East"],["3133125422","Falcon Steel Ltd",2968377.19,"North"],["3852519745","Cedar Foods Ltd",2769615.31,"North"],["3808737487","Maple Agro Ltd",1008073.44,"East"],["3934857987","Summit Printing Ltd",4840521.2,"North"],["3231268108","Prairie Logistics Ltd",5617871.81,"South"],["3610290619","Falcon Foods Ltd",7694722.93,"East"],["3074951469","Falcon Motors Ltd",916087.78,"East"],["3329810591","Falcon Holdings Ltd",2103260.47,"East"],["3337241232","Ironwood Agro Ltd",645605.11,"South"],["3659374923","Cedar Steel Ltd",717336.43,"North"],["3892425667","Maple Packaging Ltd",5782558.91,"Main"],["3283358367","Evergreen Pharma Ltd",1310580.66,"South"],["3717012490","Silverline Printing Ltd",940430.39,"East"],["3020372698","Riverbend Motors Ltd",3157004.81,"South"],["3975060018","Northwind Logistics Ltd",3487875.73,"North"],["3453751649","Riverbend Ceramics Ltd",359739.81,"South"],["3676947048","Riverbend Logistics Ltd",426633.88,"Main"],["3091428888","Bluefield Logistics Ltd",3759059.98,"Main"],["3665188430","Bluefield Ceramics Ltd",2790419.57,"North"],["3818613769","Riverbend Foods Ltd",859976.31,"East"],["3375077382","Ironwood Printing Ltd",8148702.04,"East"],["3314655194","Maple Pharma Ltd",1026239.31,"Main"],["3754042067","Silverline Foods Ltd",54710.83,"Main"],["3928385463","Cedar Ceramics Ltd",336573.11,"South"],["3392957580","Falcon Pharma Ltd",113595.23,"South"],["3589547037","Maple Agro Ltd",7519222.06,"East"],["3412503765","Northwind Steel Ltd",2698859.15,"North"],["3144898995","Riverbend Printing Ltd",1454150.06,"Main"],["3381305641","Granite Printing Ltd",29491.52,"North"],["3907396619","Evergreen Printing Ltd",113142.39,"East"],["3083348203","Northwind Ceramics Ltd",944879.51,"South"],["3273742302","Evergreen Pharma Ltd",69679.94,"North"],["3243357730","Falcon Steel Ltd",5426861.27,"South"],["3408661327","Evergreen Traders Ltd",1019961.89,"Main"],["3995602206","Northwind Holdings Ltd",956485.17,"South"],["3208797722","Lakeside Pharma Ltd",1086577.91,"South"],["3585620851","Granite Logistics Ltd",262961.01,"Main"],["3485553955","Granite Printing Ltd",226602.38,"Main"],["3253099417","Summit Textiles Ltd",57650.58,"East"],["3920120333","Cedar Motors Ltd",1248633.61,"North"],["3258152213","Maple Packaging Ltd",2303669.39,"Main"],["3025561086","Summit Traders Ltd",822279.93,"South"],["3152307702","Harbor Steel Ltd",765244.95,"North"],["3694659750","Prairie Ceramics Ltd",267228.08,"East"],["3457966965","Granite Logistics Ltd",1796044.19,"Main"],["3496728331","Riverbend Pharma Ltd",23807.24,"East"],["3124583126","Silverline Steel Ltd",205435.1,"East"],["3981343112","Cedar Holdings Ltd",419381.43,"East"],["3799967875","Ironwood Packaging Ltd",533076.39,"Main"],["3574639893","Falcon Motors Ltd",1704287.34,"North"],["3978953303","Falcon Agro Ltd",883945.42,"North"],["3111184443","Summit Textiles Ltd",1542243.92,"East"],["3265648656","Bluefield Packaging Ltd",8826219.05,"East"],["3305108919","Harbor Traders Ltd",10803319.28,"East"],["3037468257","Northwind Logistics Ltd",3389430.95,"East"],["3213292198","Falcon Logistics Ltd",8866250.65,"North"],["3786511366","Bluefield Ceramics Ltd",19142601.5,"Main"],["3221821533","Northwind Printing Ltd",2175290.02,"Main"],["3877297189","Bluefield Textiles Ltd",128375.64,"Main"],["3958283499","Riverbend Traders Ltd",6007066.07,"North"],["3606896831","Evergreen Agro Ltd",244784.47,"South"],["3599419331","Falcon Printing Ltd",23652204.88,"South"],["3034787324","Ironwood Agro Ltd",19002342.67,"Main"],["3982285277","Maple Pharma Ltd",-5248.3436,"South"],["3033757423","Silverline Motors Ltd",206973.92,"North"],["3306639314","Summit Packaging Ltd",399572.15,"Main"],["3115385801","Cedar Foods Ltd",1083676.75,"Main"],["3595425349","Harbor Packaging Ltd",9341929.37,"East"],["3393603636","Harbor Holdings Ltd",166594.0,"North"],["3098396921","Silverline Agro Ltd",4930948.62,"South"],["3755100881","Bluefield Agro Ltd",43850.84,"North"],["3879614217","Northwind Pharma Ltd",8384681.61,"Main"],["3518922548","Evergreen Packaging Ltd",1089096.24,"North"],["3478440360","Falcon Foods Ltd",1655460.64,"East"],["3540431826","Granite Agro Ltd",1014796.1,"East"],["3976067985","Granite Holdings Ltd",5374556.38,"South"],["3826389372","Maple Textiles Ltd",2178398.16,"South"],["3057074262","Evergreen Agro Ltd",17906885.0,"North"],["3861897527","Bluefield Steel Ltd",70122.41,"East"],["3593322676","Cedar Holdings Ltd",282627.53,"South"],["3230122555","Summit Traders Ltd",139575.3,"South"],["3951852849","Harbor Agro Ltd",3792177.63,"South"],["3864432898","Silverline Motors Ltd",80811.53,"South"],["3438505525","Riverbend Agro Ltd",58799151.61,"East"],["3616365340","Falcon Logistics Ltd",1392918.18,"South"],["3145183140","Northwind Agro Ltd",8495467.37,"South"],["3538669130","Silverline Steel Ltd",256240.38,"North"],["3153556943","Ironwood Ceramics Ltd",1646430.27,"North"],["3363271905","Evergreen Textiles Ltd",3265088.46,"Main"],["3772402819","Maple Logistics Ltd",388425.83,"North"],["3591040543","Summit Traders Ltd",835330.38,"South"],["3374508095","Riverbend Textiles Ltd",14531158.71,"Main"],["3824183011","Lakeside Pharma Ltd",9122288.67,"East"],["3473730532","Riverbend Foods Ltd",3036879.81,"North"],["3501301570","Falcon Pharma Ltd",28181647.21,"East"],["3222811554","Falcon Agro Ltd",53461.57,"East"],["3758550501","Falcon Motors Ltd",1916427.91,"Main"],["3782003929","Granite Steel Ltd",653311.08,"North"],["3568094588","Granite Logistics Ltd",11733713.81,"Main"],["3131557141","Lakeside Logistics Ltd",7101360.4,"East"],["3973187652","Bluefield Textiles Ltd",7811482.3,"North"],["3107083782","Maple Agro Ltd",462774.23,"North"],["3866582430","Summit Holdings Ltd",2953511.14,"East"],["3237722686","Harbor Printing Ltd",6772565.81,"South"],["3058996478","Summit Pharma Ltd",9584999.66,"Main"],["3697070496","Cedar Packaging Ltd",273144.74,"Main"],["3051333536","Lakeside Ceramics Ltd",403051.11,"Main"],["3356798384","Ironwood Ceramics Ltd",1780368.4,"Main"],["3879785701","Maple Motors Ltd",11203999.26,"North"],["3062269629","Northwind Foods Ltd",3244447.92,"North"],["3809513153","Maple Agro Ltd",10867491.02,"North"],["3915696644","Prairie Ceramics Ltd",52894.52,"East"],["3740735108","Falcon Motors Ltd",778701.21,"South"],["3872985164","Lakeside Steel Ltd",2671489.85,"South"],["3412672258","Prairie Ceramics Ltd",1851181.81,"Main"],["3289072174","Silverline Agro Ltd",58331.22,"Main"],["3300528701","Ironwood Steel Ltd",6999900.55,"North"],["3082014217","Bluefield Textiles Ltd",2089707.15,"North"],["3587181156","Northwind Steel Ltd",570107.78,"South"],["3660436728","Riverbend Packaging Ltd",8173492.82,"Main"],["3326840528","Harbor Foods Ltd",75597.13,"Main"],["3600126204","Northwind Textiles Ltd",530663.26,"South"],["3668825486","Prairie Steel Ltd",4947834.29,"Main"],["3006134541","Silverline Textiles Ltd",2194768.59,"East"],["3389951625","Granite Logistics Ltd",839448.01,"Main"],["3990002057","Northwind Motors Ltd",940303.56,"South"],["3351400626","Riverbend Logistics Ltd",827637.76,"North"],["3713698462","Northwind Agro Ltd",4816631.87,"East"],["3544977149","Harbor Foods Ltd",739043.24,"East"],["3053432221","Prairie Ceramics Ltd",3557893.22,"North"],["3977561491","Cedar Textiles Ltd",42645.7,"South"],["3206881488","Harbor Holdings Ltd",8598267.22,"East"],["3795404606","Harbor Printing Ltd",59798323.31,"North"],["3600501076","Bluefield Foods Ltd",2674925.8,"North"],["3529882569","Prairie Holdings Ltd",1047127.56,"North"],["3550744794","Lakeside Pharma Ltd",510875.32,"South"],["3717807099","Harbor Printing Ltd",3684439.66,"East"],["3901299964","Cedar Foods Ltd",424947.83,"North"],["3591862071","Maple Holdings Ltd",324495.12,"North"],["3355171280","Harbor Steel Ltd",39884.9,"South"],["3946446118","Northwind Traders Ltd",1772981.31,"North"],["3237182312","Ironwood Packaging Ltd",755155.31,"Main"],["3334922210","Silverline Traders Ltd",824433.68,"Main"],["3088300302","Silverline Textiles Ltd",1198168.21,"North"],["3706214980","Prairie Printing Ltd",387321.96,"South"],["3571525265","Riverbend Foods Ltd",1622960.58,"North"],["3071187794","Cedar Steel Ltd",213656.43,"South"],["3424802757","Maple Pharma Ltd",999865.63,"North"],["3595416376","Prairie Packaging Ltd",766609.05,"North"],["3923739443","Northwind Packaging Ltd",78176.68,"Main"],["3533807758","Ironwood Traders Ltd",172965.4,"North"],["3727996439","Lakeside Motors Ltd",466033.91,"South"],["3923652704","Summit Foods Ltd",489004.77,"South"],["3012954021","Summit Holdings Ltd",1820675.52,"South"],["3315406932","Lakeside Logistics Ltd",629078.03,"North"],["3462807400","Maple Ceramics Ltd",1108081.43,"Main"],["3673382773","Cedar Ceramics Ltd",625246.05,"East"],["3552317063","Harbor Motors Ltd",19068.32,"East"],["3990640137","Bluefield Packaging Ltd",987139.22,"East"],["3908248057","Granite Logistics Ltd",312552.57,"South"],["3327184493","Evergreen Agro Ltd",931216.67,"East"],["3295670320","Maple Ceramics Ltd",353018.08,"East"],["3654319136","Prairie Traders Ltd",3433472.34,"North"],["3028256974","Harbor Agro Ltd",1117425.75,"East"],["3886014957","Riverbend Logistics Ltd",3734908.74,"South"],["3560924164","Ironwood Textiles Ltd",4198454.02,"East"],["3596710482","Falcon Pharma Ltd",485713.22,"East"],["3840919650","Northwind Printing Ltd",4432335.18,"East"],["3714103244","Granite Pharma Ltd",1734061.48,"East"],["3114432669","Ironwood Agro Ltd",221301.71,"East"],["3696349665","Northwind Printing Ltd",998932.17,"South"],["3417625354","Riverbend Motors Ltd",1397940.88,"East"],["3214636154","Silverline Foods Ltd",9173856.53,"East"],["3984055949","Evergreen Logistics Ltd",688515.7,"East"],["3410186737","Falcon Steel Ltd",14848110.83,"South"],["3877692998","Evergreen Holdings Ltd",4121825.2,"North"],["3507613577","Granite Agro Ltd",40830.62,"Main"],["3941644566","Northwind Foods Ltd",229366.97,"Main"],["3039383494","Lakeside Ceramics Ltd",3073958.2,"South"],["3234266087","Maple Holdings Ltd",117179.86,"East"],["3128159365","Prairie Holdings Ltd",2576370.24,"South"],["3395911691","Ironwood Traders Ltd",10986577.92,"North"],["3355353731","Riverbend Foods Ltd",783042.27,"Main"],["3449861355","Lakeside Motors Ltd",11436359.8,"East"],["3835394276","Cedar Motors Ltd",10001996.59,"Main"],["3866788809","Summit Foods Ltd",1098935.47,"East"],["3631968390","Harbor Pharma Ltd",1140098.09,"Main"],["3723790096","Harbor Logistics Ltd",1607163.9,"South"],["3034534086","Prairie Steel Ltd",2450570.58,"East"],["3394062256","Prairie Traders Ltd",99515.31,"North"],["3759767838","Bluefield Logistics Ltd",953727.32,"Main"],["3289497893","Riverbend Logistics Ltd",82684.98,"South"],["3230091648","Riverbend Packaging Ltd",692308.43,"East"],["3282065258","Maple Agro Ltd",846572.79,"East"],["3074572609","Evergreen Foods Ltd",65651.32,"North"],["3673353860","Cedar Printing Ltd",159267.56,"Main"],["3924182111","Silverline Printing Ltd",636065.12,"Main"],["3898451535","Bluefield Agro Ltd",38131534.34,"East"],["3482864049","Lakeside Pharma Ltd",130773.37,"South"],["3882009011","Lakeside Printing Ltd",1467812.52,"South"],["3777164491","Riverbend Logistics Ltd",287886.25,"East"],["3555247246","Ironwood Pharma Ltd",659958.15,"East"],["3576483346","Bluefield Packaging Ltd",5816916.75,"North"],["3206836623","Cedar Pharma Ltd",1976344.71,"North"],["3200678154","Summit Motors Ltd",2376752.83,"South"],["3022063610","Prairie Traders Ltd",2628736.77,"East"],["3032802297","Northwind Foods Ltd",3020096.55,"East"],["3094897451","Evergreen Motors Ltd",37854.03,"Main"],["3155198005","Ironwood Pharma Ltd",2230360.88,"East"],["3188193720","Prairie Printing Ltd",1049541.58,"South"],["3529374099","Ironwood Steel Ltd",2271433.87,"East"],["3009739693","Maple Logistics Ltd",4584552.54,"East"],["3869771833","Granite Ceramics Ltd",2338594.09,"Main"],["3790737649","Granite Steel Ltd",3629635.15,"South"],["3050431251","Riverbend Printing Ltd",184548.36,"Main"],["3426629261","Silverline Holdings Ltd",2462015.68,"Main"],["3505514892","Northwind Packaging Ltd",1009705.15,"North"],["3032788339","Lakeside Packaging Ltd",1047179.53,"East"],["3351177298","Harbor Printing Ltd",9628283.88,"South"],["3494994548","Ironwood Textiles Ltd",550249.18,"South"],["3089216545","Riverbend Traders Ltd",413921.3,"Main"],["3398149956","Bluefield Printing Ltd",147015.21,"North"],["3193932452","Summit Traders Ltd",749407.55,"Main"],["3373272812","Evergreen Textiles Ltd",6669783.82,"East"],["3635689194","Harbor Foods Ltd",83411.09,"North"],["3550278198","Ironwood Packaging Ltd",1797574.52,"East"],["3347876231","Northwind Textiles Ltd",20901.6,"Main"],["3822364483","Summit Textiles Ltd",398549.1,"East"],["3667913231","Northwind Motors Ltd",2421716.38,"South"],["3285466025","Harbor Agro Ltd",508034.32,"South"],["3811309747","Lakeside Ceramics Ltd",175736.91,"South"],["3089325218","Northwind Steel Ltd",667187.05,"Main"],["3764075875","Northwind Packaging Ltd",5853637.16,"North"],["3050047406","Maple Packaging Ltd",13086556.22,"South"],["3210735890","Riverbend Pharma Ltd",13518057.17,"East"],["3215235351","Northwind Packaging Ltd",3582823.28,"South"],["3007287073","Lakeside Pharma Ltd",2141306.79,"South"],["3091989202","Harbor Printing Ltd",5823088.16,"South"],["3329615179","Maple Holdings Ltd",189057.17,"North"],["3257989702","Summit Agro Ltd",255065.53,"Main"],["3257268871","Evergreen Foods Ltd",9497029.31,"East"],["3637807819","Granite Pharma Ltd",4732845.92,"North"],["3448012917","Cedar Traders Ltd",4877442.01,"North"],["3418292347","Lakeside Motors Ltd",1714995.97,"North"],["3914618887","Northwind Pharma Ltd",321260.69,"South"],["3542189537","Bluefield Traders Ltd",213594.9,"Main"],["3268413337","Northwind Packaging Ltd",5394416.81,"North"],["3289631491","Ironwood Packaging Ltd",6800608.03,"North"],["3470765454","Granite Ceramics Ltd",200234.2,"South"],["3866615331","Bluefield Printing Ltd",368345.79,"North"],["3422951328","Ironwood Agro Ltd",1020058.93,"Main"],["3595180087","Bluefield Traders Ltd",4873975.79,"South"],["3083677213","Silverline Textiles Ltd",697416.8,"East"],["3162669523","Falcon Logistics Ltd",307563.73,"South"],["3886668989","Lakeside Steel Ltd",5847181.45,"South"],["3199969287","Riverbend Holdings Ltd",3127166.3,"North"],["3442203398","Lakeside Foods Ltd",396008.51,"South"],["3611198886","Maple Textiles Ltd",418751.63,"Main"],["3259493178","Prairie Ceramics Ltd",7102531.22,"South"],["3746556591","Bluefield Motors Ltd",154910.11,"Main"],["3869101849","Falcon Motors Ltd",752682.41,"East"],["3844588610","Evergreen Ceramics Ltd",2467934.59,"North"],["3120216266","Harbor Packaging Ltd",1564407.79,"Main"],["3751157746","Summit Pharma Ltd",5320424.24,"Main"],["3928976684","Prairie Holdings Ltd",77837.47,"Main"],["3280768161","Summit Printing Ltd",1236968.63,"North"],["3615949591","Maple Steel Ltd",1947114.65,"Main"],["3824935746","Summit Motors Ltd",2050828.91,"North"],["3226143528","Harbor Printing Ltd",3026938.28,"Main"],["3647599356","Cedar Ceramics Ltd",185908.99,"Main"],["3324030982","Evergreen Printing Ltd",12142616.98,"East"],["3785667904","Northwind Textiles Ltd",2486704.05,"North"],["3167775160","Harbor Textiles Ltd",2949092.57,"East"],["3402511831","Harbor Pharma Ltd",477832.25,"East"],["3584818266","Silverline Ceramics Ltd",1605908.35,"Main"],["3124078644","Falcon Ceramics Ltd",10106986.76,"North"],["3931029507","Maple Steel Ltd",1173748.25,"Main"],["3824122194","Lakeside Traders Ltd",1643883.26,"North"],["3713872937","Granite Pharma Ltd",1996179.77,"North"],["3879169555","Maple Foods Ltd",88177.21,"East"],["3708057436","Harbor Logistics Ltd",912464.55,"North"],["3327922273","Northwind Pharma Ltd",3644852.37,"East"],["3767331080","Ironwood Steel Ltd",550359.62,"South"],["3494295651","Lakeside Printing Ltd",1124140.36,"South"],["3132087545","Bluefield Traders Ltd",1141214.9,"North"],["3973591437","Riverbend Foods Ltd",95998.66,"South"],["3314647218","Lakeside Motors Ltd",4355249.5,"Main"],["3651101817","Falcon Pharma Ltd",137795.98,"Main"],["3860337222","Maple Motors Ltd",2364953.0,"South"],["3437828562","Silverline Motors Ltd",971158.95,"East"],["3782857361","Cedar Foods Ltd",696763.86,"Main"],["3036096385","Northwind Steel Ltd",1338217.78,"South"],["3408526732","Evergreen Pharma Ltd",4016362.81,"Main"],["3580232066","Ironwood Textiles Ltd",4419488.68,"East"],["3078482843","Bluefield Textiles Ltd",604075.13,"Main"],["3054544873","Riverbend Motors Ltd",924361.14,"Main"],["3493703433","Granite Holdings Ltd",304039.67,"East"],["3194327264","Summit Steel Ltd",116029.75,"Main"],["3176202801","Falcon Ceramics Ltd",5506848.25,"Main"],["3348842324","Prairie Pharma Ltd",207813.29,"East"],["3984626233","Bluefield Ceramics Ltd",370837.58,"Main"],["3394035337","Riverbend Logistics Ltd",2206783.77,"North"],["3321485641","Granite Printing Ltd",139203.77,"East"],["3161895851","Cedar Motors Ltd",2592551.75,"East"],["3440785664","Riverbend Holdings Ltd",311765.19,"Main"],["3004286103","Riverbend Logistics Ltd",195186.89,"East"],["3354656828","Evergreen Motors Ltd",474934.54,"East"],["3903473424","Summit Steel Ltd",308140.78,"Main"],["3580991780","Ironwood Ceramics Ltd",1754491.95,"South"],["3084142812","Ironwood Ceramics Ltd",11629040.42,"South"],["3346100574","Evergreen Steel Ltd",3535949.13,"North"],["3461667829","Evergreen Holdings Ltd",2530438.41,"North"],["3332664005","Falcon Printing Ltd",449323.43,"North"],["3568819407","Evergreen Packaging Ltd",817649.05,"East"],["3087778871","Falcon Packaging Ltd",1394139.68,"Main"],["3492165062","Riverbend Motors Ltd",1065118.44,"South"],["3839650469","Maple Motors Ltd",1467921.03,"South"],["3165995515","Evergreen Textiles Ltd",170269.34,"South"],["3077370191","Bluefield Agro Ltd",19444288.22,"South"],["3686988832","Harbor Ceramics Ltd",134154.99,"North"],["3166955626","Granite Pharma Ltd",894531.68,"North"],["3494154077","Granite Pharma Ltd",4232942.47,"Main"],["3960070123","Ironwood Foods Ltd",340942.76,"North"],["3074338314","Silverline Textiles Ltd",6022842.42,"North"],["3942872870","Silverline Holdings Ltd",117118.4,"East"],["3859876608","Granite Textiles Ltd",340184.81,"South"],["3641207589","Evergreen Ceramics Ltd",25922.29,"North"],["3103349020","Cedar Traders Ltd",5816450.44,"East"],["3837144011","Prairie Steel Ltd",164348.91,"South"],["3729073199","Maple Traders Ltd",365692.18,"North"],["3981460758","Harbor Agro Ltd",3757497.67,"South"],["3722324506","Silverline Logistics Ltd",1907270.48,"North"],["3539781782","Summit Printing Ltd",6023043.76,"East"],["3912917008","Summit Logistics Ltd",3086321.01,"East"],["3108469612","Summit Pharma Ltd",4551899.88,"Main"],["3222818533","Ironwood Agro Ltd",506389.89,"North"],["3213454709","Harbor Foods Ltd",951479.19,"North"],["3932747338","Summit Holdings Ltd",3555427.57,"South"],["3873404901","Evergreen Holdings Ltd",3631863.79,"South"],["3515488880","Riverbend Packaging Ltd",4945644.78,"East"],["3155664601","Ironwood Steel Ltd",319721.67,"Main"],["3669013919","Silverline Motors Ltd",188400.48,"South"],["3482565946","Maple Textiles Ltd",146131.23,"East"],["3329985066","Summit Packaging Ltd",510144.1,"Main"],["3292325385","Maple Foods Ltd",925172.98,"South"],["3428392954","Lakeside Steel Ltd",161172.33,"South"],["3891324979","Summit Textiles Ltd",810015.04,"Main"],["3856182723","Falcon Motors Ltd",2985434.8,"Main"],["3291969456","Riverbend Printing Ltd",5289232.39,"Main"],["3416547597","Harbor Packaging Ltd",424748.57,"North"],["3101785724","Lakeside Textiles Ltd",2696212.08,"South"],["3317208511","Harbor Motors Ltd",141012.59,"East"],["3957666356","Harbor Steel Ltd",377963.1,"South"],["3058875841","Evergreen Foods Ltd",1288560.29,"South"],["3631368196","Evergreen Agro Ltd",386715.78,"North"],["3066359323","Cedar Traders Ltd",312569.25,"Main"],["3909194210","Cedar Pharma Ltd",1668754.91,"South"],["3612373352","Falcon Printing Ltd",222435.57,"South"],["3742343269","Bluefield Traders Ltd",1296696.32,"East"],["3873221453","Cedar Printing Ltd",914662.61,"South"],["3752516657","Maple Logistics Ltd",2448934.4,"East"],["3547430766","Silverline Foods Ltd",3629143.46,"East"],["3274145090","Harbor Packaging Ltd",1342116.03,"East"],["3812848118","Ironwood Agro Ltd",-4894.771400000001,"South"],["3163292648","Silverline Textiles Ltd",5433158.74,"Main"],["3697742474","Silverline Holdings Ltd",1483471.76,"East"],["3513567661","Northwind Steel Ltd",264728.09,"South"],["3644219526","Harbor Agro Ltd",1425763.78,"South"],["3229760644","Lakeside Steel Ltd",405934.92,"North"],["3672577197","Northwind Agro Ltd",19029.45,"Main"],["3868420898","Summit Ceramics Ltd",233123.95,"East"],["3891174432","Bluefield Logistics Ltd",589603.65,"North"],["3036576939","Riverbend Holdings Ltd",519534.83,"South"],["3445931181","Ironwood Agro Ltd",92239.53,"Main"],["3383424266","Prairie Agro Ltd",617633.05,"East"],[null,"Grand Total",1209874858.0569,null]],"staff":["3538669130","3257989702","3585620851","3295670320","3153556943","3766309155"]};
+const $ = id => document.getElementById(id);
+
+/* ---------- math ---------- */
+function lgamma(x){const g=7,c=[0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+  if(x<0.5)return Math.log(Math.PI/Math.sin(Math.PI*x))-lgamma(1-x);x-=1;let a=c[0];const t=x+g+0.5;for(let i=1;i<9;i++)a+=c[i]/(x+i);return 0.5*Math.log(2*Math.PI)+(x+0.5)*Math.log(t)-t+Math.log(a);}
+function poissonCdf(k,l){if(l<=0)return 1;let t=Math.exp(-l),s=t;for(let i=1;i<=k;i++){t*=l/i;s+=t;}return Math.min(s,1);}
+function binomCdf(k,n,p){if(k<0)return 0;if(k>=n||p<=0)return 1;if(p>=1)return 0;const lp=Math.log(p),lq=Math.log1p(-p);let s=0;
+  for(let i=0;i<=k;i++)s+=Math.exp(lgamma(n+1)-lgamma(i+1)-lgamma(n-i+1)+i*lp+(n-i)*lq);return Math.min(s,1);}
+function bisect(f,lo,hi){for(let i=0;i<100;i++){const m=(lo+hi)/2;if(f(m)>0)lo=m;else hi=m;}return hi;}
+function rf(ria,k=0){return k===0?-Math.log(ria):bisect(l=>poissonCdf(k,l)-ria,0,10*(k+5));}
+const EF={0.01:1.9,0.05:1.6,0.10:1.5,0.15:1.4,0.20:1.3,0.25:1.25,0.30:1.2,0.37:1.15,0.50:1.0};
+function ef(r){const ks=Object.keys(EF).map(Number).sort((a,b)=>a-b);if(r<=ks[0])return EF[ks[0]];for(let i=0;i<ks.length-1;i++)if(r>=ks[i]&&r<=ks[i+1]){const w=(r-ks[i])/(ks[i+1]-ks[i]);return EF[ks[i]]+w*(EF[ks[i+1]]-EF[ks[i]]);}return 1;}
+function musSize(bv,tm,ria,em){if(tm<=0)throw Error("Set a tolerable misstatement greater than zero.");if(bv<=0)return 0;const d=tm-em*ef(ria);
+  if(d<=0)throw Error("Expected misstatement is too close to tolerable misstatement — sampling can't give the required assurance. Lower the expected misstatement or test 100%.");return Math.ceil(bv*rf(ria)/d);}
+function attrSize(tdr,edr,ria,N){if(edr>=tdr)throw Error("The expected deviation rate must be below the tolerable rate.");let n=1;
+  for(;n<=5000;n++){const k=edr>0?Math.ceil(n*edr-1e-9):0;if(binomCdf(k,n,tdr)<=ria)break;}return Math.min(n,N);}
+function udl(n,k,ria){if(n<=0||k>=n)return 1;return bisect(p=>binomCdf(k,n,p)-ria,0,1);}
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function shuffle(arr,r){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+/* ---------- cleaning ---------- */
+function parseAmt(v){if(typeof v==="number")return v;if(v==null)return NaN;let s=String(v).trim();if(!s)return NaN;const neg=/^\(.*\)$/.test(s);
+  s=s.replace(/[()]/g,"").replace(/[^\d.\-eE]/g,"");if(!s)return NaN;const x=Number(s);return isNaN(x)?NaN:(neg?-Math.abs(x):x);}
+function normId(v){if(v==null)return "";return String(v).trim().replace(/\.0+$/,"");}
+function clean(rows,cols,ci,ca,cn){const pop=[],exc=[];rows.forEach((r,i)=>{const id=normId(r[ci]),amt=parseAmt(r[ca]),name=r[cn]==null?"":String(r[cn]);
+  const text=(id+" "+name).toLowerCase();let why="";
+  if(/\b(sub)?total\b/.test(text)||((id===""||id==="nan")&&!isNaN(amt)))why="Total / subtotal row";
+  else if(isNaN(amt))why="Amount not numeric";else if(amt<0)why="Negative (credit) balance";
+  const item={row:i,id,name,amt,raw:r};if(why){item.why=why;exc.push(item);}else pop.push(item);});return{pop,exc};}
+
+/* ---------- selection ---------- */
+function musSelect(pop,n,seed){const pos=pop.filter(x=>x.amt>0),tot=pos.reduce((s,x)=>s+x.amt,0);if(n<=0||tot<=0)return{sample:[],interval:0};
+  const I=tot/n,start=rng(seed)()*I,cum=[];let c=0;for(const x of pos){c+=x.amt;cum.push(c);}const hits=new Map();
+  for(let k=0;k<n;k++){const p=start+k*I;let lo=0,hi=cum.length;while(lo<hi){const m=(lo+hi)>>1;if(cum[m]<=p)lo=m+1;else hi=m;}if(lo<pos.length)hits.set(lo,(hits.get(lo)||0)+1);}
+  const sample=[...hits.keys()].sort((a,b)=>a-b).map(i=>({...pos[i],hits:hits.get(i),reason:pos[i].amt>=I?"Key item (≥ interval)":"MUS selection"}));return{sample,interval:I};}
+function assignStrata(pop,thr,ns){const rest=pop.filter(x=>x.amt<thr).sort((a,b)=>a.amt-b.amt),tot=rest.reduce((s,x)=>s+x.amt,0);ns=Math.max(1,Math.min(ns,rest.length||1));
+  pop.forEach(x=>x.stratum=x.amt>=thr?"Key":null);let c=0;rest.forEach((x,i)=>{c+=x.amt;const share=tot>0?c/tot:(i+1)/rest.length;x.stratum=String(Math.max(1,Math.min(ns,Math.floor(share*ns-1e-9)+1)));});}
+function allocate(sizes,weights,n){const ks=Object.keys(sizes),out={};const cap=ks.reduce((s,k)=>s+sizes[k],0);n=Math.min(n,cap);if(n<=0){ks.forEach(k=>out[k]=0);return out;}
+  const wt=ks.reduce((s,k)=>s+Math.max(0,weights[k]),0),raw={};ks.forEach(k=>{raw[k]=(wt>0?Math.max(0,weights[k])/wt:sizes[k]/cap)*n;out[k]=Math.min(sizes[k],Math.max(1,Math.floor(raw[k])));});
+  let sum=()=>ks.reduce((s,k)=>s+out[k],0);while(sum()<n){let best=null,bv=-Infinity;for(const k of ks)if(sizes[k]-out[k]>0&&raw[k]-out[k]>bv){bv=raw[k]-out[k];best=k;}if(best==null)break;out[best]++;}
+  while(sum()>n){let best=null,bv=-Infinity;for(const k of ks)if(out[k]>0&&out[k]-raw[k]>bv){bv=out[k]-raw[k];best=k;}out[best]--;}return out;}
+function stratSelect(pop,nr,seed){const key=pop.filter(x=>x.stratum==="Key"),groups={};pop.filter(x=>x.stratum!=="Key").forEach(x=>(groups[x.stratum]=groups[x.stratum]||[]).push(x));
+  const ks=Object.keys(groups).sort((a,b)=>a-b),sizes={},w={};ks.forEach(k=>{sizes[k]=groups[k].length;w[k]=groups[k].reduce((s,x)=>s+x.amt,0);});
+  const al=allocate(sizes,w,nr),sample=key.map(x=>({...x,reason:"Key item (≥ threshold)"})),summary=[];
+  if(key.length)summary.push({s:"Key",items:key.length,value:key.reduce((s,x)=>s+x.amt,0),lo:Math.min(...key.map(x=>x.amt)),hi:Math.max(...key.map(x=>x.amt)),n:key.length});
+  ks.forEach((k,i)=>{const g=groups[k];shuffle(g,rng(seed+i+1)).slice(0,al[k]).forEach(x=>sample.push({...x,reason:"Random — stratum "+k}));
+    summary.push({s:k,items:g.length,value:w[k],lo:Math.min(...g.map(x=>x.amt)),hi:Math.max(...g.map(x=>x.amt)),n:al[k]});});return{sample,summary};}
+function sysSelect(pop,n,seed){n=Math.min(n,pop.length);if(n<=0)return{sample:[],k:0};const k=pop.length/n,st=rng(seed)()*k,seen=new Set(),s=[];
+  for(let i=0;i<n;i++){const p=Math.floor(st+k*i);if(!seen.has(p)){seen.add(p);s.push({...pop[p],reason:"Systematic (interval "+k.toFixed(2)+")"});}}return{sample:s,k};}
+function randSelect(pop,n,seed){return shuffle(pop,rng(seed)).slice(0,Math.min(n,pop.length)).map(x=>({...x,reason:"Simple random selection"}));}
+
+/* ---------- state ---------- */
+const S={name:"",sheets:{},sheet:"",cols:[],rows:[],staffIds:null,method:"stratified",tab:"plan",results:{},sig:""};
+const fmt=new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const money=v=>(v<0?"−":"")+"$"+fmt.format(Math.abs(v));
+const pct=v=>(v*100).toFixed(2)+"%";
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function guess(cols,kws,fb){for(const k of kws){const i=cols.findIndex(c=>String(c).toLowerCase().includes(k));if(i>=0)return i;}return Math.min(fb,cols.length-1);}
+function fillSelect(el,opts,idx){el.innerHTML=opts.map((o,i)=>`<option value="${i}">${esc(o)}</option>`).join("");el.value=String(Math.max(0,idx));}
+
+function loadBook(name,sheets){S.name=name;S.sheets=sheets;const names=Object.keys(sheets);$("srcName").textContent=name;
+  $("sheetWrap").hidden=names.length<2;fillSelect($("sheet"),names,Math.max(0,names.indexOf("Loans")));$("sheet").dataset.names=JSON.stringify(names);useSheet();}
+function useSheet(){const names=JSON.parse($("sheet").dataset.names),sh=names[+$("sheet").value],d=S.sheets[sh];S.sheet=sh;S.cols=d.cols;S.rows=d.rows;
+  fillSelect($("colId"),S.cols,guess(S.cols,["account","id","no","number"],0));fillSelect($("colAmt"),S.cols,guess(S.cols,["outstanding","balance","amount","amt","value"],1));
+  fillSelect($("colName"),S.cols,guess(S.cols,["name","customer","description","desc"],2));
+  const others=names.filter(n=>n!==sh);const opts=["None"].concat(others.map(n=>"Sheet: "+n));$("staffSrc").dataset.others=JSON.stringify(others);
+  fillSelect($("staffSrc"),opts,others.indexOf("Staff")+1);$("staffWrap").hidden=!others.length;S.results={};run();}
+function staffIds(){const others=JSON.parse($("staffSrc").dataset.others||"[]"),i=+$("staffSrc").value;if(!i||!others[i-1])return null;const d=S.sheets[others[i-1]];
+  const col=guess(d.cols,[S.cols[+$("colId").value].toLowerCase(),"account","id"],0);return new Set(d.rows.map(r=>normId(r[col])).filter(Boolean));}
+
+function demo(){const d={Loans:{cols:DEMO.cols,rows:DEMO.rows},Staff:{cols:["Account No"],rows:DEMO.staff.map(x=>[x])}};loadBook("loan_population.xlsx (synthetic demo)",d);}
+
+$("file").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)return;try{const buf=await f.arrayBuffer();const wb=XLSX.read(buf,{type:"array"});const sheets={};
+  wb.SheetNames.forEach(n=>{const a=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null});if(!a.length)return;const cols=a[0].map((c,i)=>c==null?"Column "+(i+1):String(c).trim());
+    sheets[f.name.toLowerCase().endsWith(".csv")?"CSV":n]={cols,rows:a.slice(1).filter(r=>r.some(v=>v!=null&&v!==""))};});loadBook(f.name,sheets);}
+  catch(err){$("notes").innerHTML=`<div class="note err">Couldn't read ${esc(f.name)}: ${esc(err.message)}</div>`;}e.target.value="";});
+$("demoBtn").onclick=demo;
+$("sheet").onchange=useSheet;
+["colId","colAmt","colName","staffSrc","ria","tmBasis","tm","em","tdr","edr","keyBasis","keyVal","strata","seed","override"].forEach(id=>$(id).addEventListener("input",()=>{
+  if(id==="tmBasis"){$("tmLabel").textContent=$("tmBasis").value==="pct"?"Tolerable %":"Tolerable amount";$("tm").value=$("tmBasis").value==="pct"?2:10000;}
+  if(id==="keyBasis"){const b=$("keyBasis").value;$("keyValWrap").hidden=b==="tm";$("keyValLabel").textContent=b==="top"?"Top % of items":"Threshold";$("keyVal").value=b==="top"?5:100000;}
+  run();}));
+$("method").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;S.method=b.dataset.v;[...$("method").children].forEach(x=>x.setAttribute("aria-pressed",x===b));run();});
+$("tabs").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;S.tab=b.dataset.t;[...$("tabs").children].forEach(x=>x.setAttribute("aria-selected",x===b));
+  ["plan","wp","eval","pop"].forEach(t=>$("pane-"+t).hidden=t!==S.tab);});
+
+/* ---------- main computation ---------- */
+let M={};
+function run(){const notes=[],m=S.method,monetary=m!=="attribute";$("monetaryBox").hidden=!monetary;$("attrBox").hidden=monetary;$("strataBox").hidden=m!=="stratified";
+  if(!S.rows.length)return;const ci=+$("colId").value,ca=+$("colAmt").value,cn=+$("colName").value;const {pop,exc}=clean(S.rows,S.cols,ci,ca,cn);
+  if(!pop.length){$("notes").innerHTML=`<div class="note err">No usable rows. Check the ID and amount column mapping.</div>`;return;}
+  const N=pop.length,BV=pop.reduce((s,x)=>s+x.amt,0),ria=+$("ria").value,seed=Math.max(0,parseInt($("seed").value)||0),ov=parseInt($("override").value);
+  let tol=0,em=0,tdr=0,edr=0;if(monetary){const t=+$("tm").value||0;tol=$("tmBasis").value==="pct"?t/100*BV:t;em=(+$("em").value||0)/100*tol;}else{tdr=(+$("tdr").value||0)/100;edr=(+$("edr").value||0)/100;}
+  let nCalc,n,sample=[],interval=0,summary=null,thr=null;
+  try{
+    if(m==="mus"){nCalc=musSize(BV,tol,ria,em);n=ov>0?ov:nCalc;({sample,interval}=musSelect(pop,n,seed));}
+    else if(m==="stratified"){const b=$("keyBasis").value,kv=+$("keyVal").value||0;
+      thr=b==="tm"?tol:b==="amt"?kv:(()=>{const s=pop.map(x=>x.amt).sort((a,b)=>a-b);const q=1-kv/100;const p=q*(s.length-1),lo=Math.floor(p);return s[lo]+(s[Math.min(lo+1,s.length-1)]-s[lo])*(p-lo);})();
+      assignStrata(pop,thr,Math.max(1,Math.min(6,parseInt($("strata").value)||3)));const restV=pop.filter(x=>x.stratum!=="Key").reduce((s,x)=>s+x.amt,0);
+      nCalc=restV>0?musSize(restV,tol,ria,em):0;n=ov>0?ov:nCalc;({sample,summary}=stratSelect(pop,n,seed));
+      notes.push(["",`Key items at or above ${money(thr)} are tested 100%. A random sample of ${n} is spread across strata of equal value, sized on the remaining ${money(restV)}.`]);}
+    else if(m==="systematic"){nCalc=Math.min(musSize(BV,tol,ria,em),N);n=ov>0?ov:nCalc;const r=sysSelect(pop,n,seed);sample=r.sample;
+      notes.push(["",`Every ${r.k.toFixed(2)}th item from a random start. Population order matters, so sort it deliberately before uploading.`]);}
+    else{nCalc=attrSize(tdr,edr,ria,N);n=ov>0?ov:nCalc;sample=randSelect(pop,n,seed);}
+  }catch(err){$("notes").innerHTML=`<div class="note err">${esc(err.message)}</div>`;clearOut();return;}
+  const sIds=staffIds();if(sIds){const have=new Set(sample.map(x=>x.row));pop.filter(x=>sIds.has(x.id)).forEach(x=>{if(have.has(x.row)){const s=sample.find(y=>y.row===x.row);s.reason+="; Staff / insider";s.staffAlso=true;}
+    else sample.push({...x,reason:"Staff / insider (targeted)",targeted:true});});}
+  if(ov>0)notes.push(["",`Sample size overridden: calculated ${nCalc}, used ${n}.`]);
+  if(n>N&&m!=="stratified")notes.push(["warn","The calculated sample is larger than the population. Consider testing every item."]);
+  if(exc.length){const v=exc.reduce((s,x)=>s+(isNaN(x.amt)?0:Math.abs(x.amt)),0);notes.unshift(["warn",`${exc.length} row${exc.length>1?"s":""} excluded from the population (${money(v)} absolute value). See the Population tab. Credit balances and unreadable amounts need their own procedures.`]);}
+  const dup=N-new Set(pop.map(x=>x.id)).size;if(dup>0)notes.push(["warn",`${dup} rows share an ID with another row. They are treated as separate items.`]);
+  $("notes").innerHTML=notes.map(([c,t])=>`<div class="note ${c}">${esc(t)}</div>`).join("");
+  const sig=[S.name,S.sheet,ci,ca,cn,m,n,seed,sample.map(x=>x.row).join(",")].join("|");if(sig!==S.sig){S.sig=sig;S.results={};}
+  M={pop,exc,N,BV,ria,seed,tol,em,tdr,edr,n,nCalc,sample,interval,summary,thr,monetary,m,cols:S.cols,cn,ci,ca};
+  const sv=sample.reduce((s,x)=>s+x.amt,0);$("kN").textContent=N.toLocaleString();$("kBV").textContent=money(BV);$("kn").textContent=sample.length.toLocaleString();$("kCov").textContent=BV?pct(sv/BV):"–";
+  renderPlan();renderWp();renderEval();renderPop();}
+function clearOut(){["kN","kBV","kn","kCov"].forEach(i=>$(i).textContent="–");["plan","wp","eval","pop"].forEach(t=>$("pane-"+t).innerHTML="");}
+
+const METHOD_NAMES={stratified:"Stratified (key items + value strata)",mus:"Monetary unit sampling",attribute:"Attribute sampling (controls)",systematic:"Systematic"};
+function renderPlan(){const p=[["Source",S.name+(Object.keys(S.sheets).length>1?" · "+S.sheet:"")],["ID / amount / name",[M.ci,M.ca,M.cn].map(i=>M.cols[i]).join(" / ")],["Method",METHOD_NAMES[M.m]],["Confidence",pct(1-M.ria)],
+  ["Population items",M.N.toLocaleString()],["Population value",money(M.BV)],["Rows excluded",M.exc.length],["Calculated sample size",M.nCalc],["Sample size used",M.n],["Items selected (incl. targeted)",M.sample.length],["Random seed",M.seed]];
+  if(M.monetary)p.push(["Tolerable misstatement",money(M.tol)],["Expected misstatement",money(M.em)],["Reliability factor",rf(M.ria).toFixed(2)]);
+  if(M.interval)p.push(["Sampling interval",money(M.interval)]);if(M.m==="attribute")p.push(["Tolerable deviation rate",pct(M.tdr)],["Expected deviation rate",pct(M.edr)]);
+  const reasons={};M.sample.forEach(x=>{const r=x.reason.replace(/ — stratum \d+/,"");reasons[r]=(reasons[r]||0)+1;});
+  let h=`<div class="grid2"><div><h2>Sampling plan</h2><div class="tw" style="margin-top:8px"><table class="kv"><tbody>${p.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${esc(v)}</td></tr>`).join("")}</tbody></table></div></div>
+  <div style="display:grid;gap:14px;align-content:start"><div><h2>Selection breakdown</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th>Reason</th><th class="n">Items</th></tr></thead><tbody>${Object.entries(reasons).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${v}</td></tr>`).join("")}</tbody></table></div></div>`;
+  if(M.summary&&M.summary.length)h+=`<div><h2>Strata</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th>Stratum</th><th class="n">Items</th><th class="n">Value</th><th class="n">Range</th><th class="n">Sample</th></tr></thead><tbody>${M.summary.map(s=>`<tr><td>${s.s}</td><td class="n">${s.items}</td><td class="n">${money(s.value)}</td><td class="n">${money(s.lo)} – ${money(s.hi)}</td><td class="n">${s.n}</td></tr>`).join("")}</tbody></table></div></div>`;
+  $("pane-plan").innerHTML=h+"</div></div>";}
+
+const STATUSES=["Pending","Tested – no exception","Tested – exception","Not testable"];
+function res(row){return S.results[row]||(S.results[row]={status:"Pending",audited:"",dev:false,by:"",note:""});}
+function pillFor(x){const c=x.targeted||x.staffAlso?"staff":/Key/.test(x.reason)?"key":"";return `<span class="pill ${c}">${esc(x.reason)}</span>`;}
+function renderWp(){const mon=M.monetary;let h=`<div class="actions"><h2 style="margin-right:auto">Workpaper <span class="hint" style="font-family:var(--body)">· ${M.sample.length} items</span></h2>
+  <button class="btn ghost" type="button" id="fillAll">Mark untested items as no exception</button><button class="btn ghost" type="button" id="copyCsv">Copy as CSV</button></div>
+  <p class="hint">Record what you found. Enter the audited value for each item; the misstatement is book minus audited. Changing a parameter or the seed redraws the sample and clears these entries.</p>
+  <div class="tw wp"><table><thead><tr><th>ID</th><th>Name</th><th class="n">Book value</th><th>Selected because</th><th>Status</th><th class="n">${mon?"Audited value":"Deviation"}</th>${mon?'<th class="n">Misstatement</th>':""}<th>Tested by</th><th>Notes</th></tr></thead><tbody>`;
+  M.sample.forEach(x=>{const r=res(x.row),mis=mon&&r.audited!==""?x.amt-(+r.audited):null;
+    h+=`<tr data-row="${x.row}" class="${r.status==="Tested – exception"?"exc":""}"><td class="id">${esc(x.id)}</td><td>${esc(x.name)}</td><td class="n">${fmt.format(x.amt)}</td><td>${pillFor(x)}</td>
+    <td><select data-f="status" aria-label="Status for ${esc(x.id)}">${STATUSES.map(s=>`<option${s===r.status?" selected":""}>${s}</option>`).join("")}</select></td>
+    <td class="n">${mon?`<input data-f="audited" type="number" step="0.01" value="${esc(r.audited)}" aria-label="Audited value for ${esc(x.id)}">`:`<input data-f="dev" type="checkbox"${r.dev?" checked":""} aria-label="Deviation for ${esc(x.id)}">`}</td>
+    ${mon?`<td class="n">${mis==null?"":fmt.format(mis)}</td>`:""}<td><input data-f="by" type="text" value="${esc(r.by)}" aria-label="Tested by"></td><td><input class="note-in" data-f="note" type="text" value="${esc(r.note)}" aria-label="Notes"></td></tr>`;});
+  $("pane-wp").innerHTML=h+"</tbody></table></div>";
+  $("pane-wp").querySelector("tbody").addEventListener("change",e=>{const tr=e.target.closest("tr"),f=e.target.dataset.f;if(!tr||!f)return;const r=res(+tr.dataset.row);
+    r[f]=e.target.type==="checkbox"?e.target.checked:e.target.value;
+    if(f==="audited"&&r.status==="Pending"&&r.audited!==""){const x=M.sample.find(s=>s.row===+tr.dataset.row);r.status=Math.abs(x.amt-(+r.audited))>0.005?"Tested – exception":"Tested – no exception";}
+    if(f==="dev"&&r.status==="Pending")r.status=r.dev?"Tested – exception":"Tested – no exception";
+    renderWp();renderEval();});
+  $("fillAll").onclick=()=>{M.sample.forEach(x=>{const r=res(x.row);if(r.status==="Pending"){r.status="Tested – no exception";if(M.monetary&&r.audited==="")r.audited=String(x.amt);}});renderWp();renderEval();};
+  $("copyCsv").onclick=async e=>{const q=v=>`"${String(v??"").replace(/"/g,'""')}"`;const lines=[["ID","Name","Book_Value","Selection_Reason","Audit_Status",mon?"Audited_Value":"Deviation",...(mon?["Misstatement"]:[]),"Tested_By","Audit_Notes"].join(",")];
+    M.sample.forEach(x=>{const r=res(x.row);lines.push([q(x.id),q(x.name),x.amt,q(x.reason),q(r.status),mon?r.audited:r.dev,...(mon?[r.audited===""?"":x.amt-(+r.audited)]:[]),q(r.by),q(r.note)].join(","));});
+    try{await navigator.clipboard.writeText(lines.join("\n"));e.target.textContent="Copied";}catch{e.target.textContent="Copy blocked here";}setTimeout(()=>e.target.textContent="Copy as CSV",1800);};}
+
+function tested(x){const r=res(x.row);return(r.status==="Tested – no exception"||r.status==="Tested – exception")&&(!M.monetary||r.audited!=="");}
+function renderEval(){const total=M.sample.length,done=M.sample.filter(tested).length;const prev=$("prevBox")?.checked||false;
+  let h=`<div style="display:grid;gap:6px"><div class="actions"><h2 style="margin-right:auto">Evaluation</h2><span class="hint">${done} of ${total} items tested</span></div><div class="bar"><i style="width:${total?done/total*100:0}%"></i></div></div>`;
+  if(done<total)h+=`<label class="f" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="prevBox"${prev?" checked":""}> Preview now, treating untested items as correct (for a quick look only)</label>`;
+  if(done===total||prev){const stat=M.sample.filter(x=>!x.targeted),err=x=>{const r=res(x.row);return r.audited===""?0:x.amt-(+r.audited);};let v,rows=[],detail="";
+    if(M.m==="attribute"){const k=stat.filter(x=>res(x.row).dev).length,u=udl(stat.length,k,M.ria),ok=u<=M.tdr;
+      v=[ok,`Upper deviation limit <b>${pct(u)}</b> is ${ok?"within":"above"} the tolerable rate ${pct(M.tdr)} at ${pct(1-M.ria)} confidence.`];
+      rows=[["Sample size",stat.length],["Deviations found",k],["Sample deviation rate",pct(stat.length?k/stat.length:0)],["Upper deviation limit",pct(u)],["Tolerable deviation rate",pct(M.tdr)]];}
+    else if(M.m==="mus"){const I=M.interval,key=stat.filter(x=>x.amt>=I),known=key.reduce((s,x)=>s+err(x),0),nk=stat.filter(x=>x.amt<I&&err(x)!==0&&x.amt>0).map(x=>({x,t:Math.min(1,err(x)/x.amt)}));
+      const over=nk.filter(o=>o.t>0).sort((a,b)=>b.t-a.t),under=nk.filter(o=>o.t<0).reduce((s,o)=>s+o.t*I,0);const basic=rf(M.ria)*I;let proj=0,allow=0;const dr=[];
+      over.forEach((o,i)=>{const p=o.t*I,inc=rf(M.ria,i+1)-rf(M.ria,i);proj+=p;allow+=(inc-1)*p;dr.push([i+1,o.x.id,money(o.x.amt),money(err(o.x)),o.t.toFixed(4),money(p),inc.toFixed(3)]);});
+      const uml=known+basic+proj+allow,ok=uml<=M.tol;v=[ok,`Upper misstatement limit <b>${money(uml)}</b> is ${ok?"within":"above"} tolerable misstatement ${money(M.tol)} at ${pct(1-M.ria)} confidence.`];
+      rows=[["Sampling interval",money(I)],["Known misstatement (key items)",money(known)],["Basic precision",money(basic)],["Projected misstatement",money(proj)],["Incremental allowance",money(allow)],["Projected understatements (not in limit)",money(under)],["Most likely misstatement",money(known+proj+under)],["Upper misstatement limit",money(uml)],["Tolerable misstatement",money(M.tol)]];
+      if(dr.length)detail=`<div><h2>Overstatements ranked by tainting</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th class="n">Rank</th><th>ID</th><th class="n">Book</th><th class="n">Misstatement</th><th class="n">Tainting</th><th class="n">Projected</th><th class="n">Factor step</th></tr></thead><tbody>${dr.map(r=>`<tr>${r.map((c,i)=>`<td class="${i===1?"id":"n"}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`;}
+    else{const groups=M.m==="stratified"?[...new Set(M.pop.map(x=>x.stratum))].sort((a,b)=>a==="Key"?-1:b==="Key"?1:a-b):[null];let tot=0;const dr=[];
+      groups.forEach(g=>{const ss=stat.filter(x=>g==null||x.stratum===g),pp=M.pop.filter(x=>g==null||x.stratum===g),bs=ss.reduce((s,x)=>s+x.amt,0),es=ss.reduce((s,x)=>s+err(x),0),bp=pp.reduce((s,x)=>s+x.amt,0);
+        const p=g==="Key"?es:(bs>0?es/bs*bp:0);tot+=p;dr.push([g??"All",money(bp),money(bs),money(es),money(p)]);});
+      const ok=tot<M.tol;v=[ok,`Projected misstatement <b>${money(tot)}</b> is ${ok?"below":"at or above"} tolerable misstatement ${money(M.tol)}. Judge whether the headroom of ${money(M.tol-tot)} is enough allowance for sampling risk.`];
+      rows=[["Projected misstatement",money(tot)],["Tolerable misstatement",money(M.tol)],["Headroom for sampling risk",money(M.tol-tot)]];
+      detail=`<div><h2>Projection by stratum</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th>Stratum</th><th class="n">Population value</th><th class="n">Sample value</th><th class="n">Found</th><th class="n">Projected</th></tr></thead><tbody>${dr.map(r=>`<tr>${r.map((c,i)=>`<td class="${i?"n":""}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`;}
+    h+=`<div class="verdict ${v[0]?"ok":"no"}"><b>${v[0]?"SUPPORTS":"DOES NOT SUPPORT"}</b> · ${v[1]}</div>`;if(done<total)h+=`<div class="note warn">Preview only. Untested items were treated as correct.</div>`;
+    h+=`<div class="grid2"><div class="tw"><table class="kv"><tbody>${rows.map(([k,x])=>`<tr><td>${esc(k)}</td><td class="n">${esc(x)}</td></tr>`).join("")}</tbody></table></div>${detail}</div>`;
+    const tg=M.sample.filter(x=>x.targeted);if(tg.length)h+=`<p class="hint">${tg.length} staff / insider item${tg.length>1?"s were":" was"} selected judgmentally and ${tg.length>1?"are":"is"} left out of the projection. Conclude on ${tg.length>1?"them":"it"} separately.</p>`;}
+  else h+=`<p class="hint">Record results in the Workpaper tab to evaluate the sample. For a quick demo, use “Mark untested items as no exception”, then change one or two audited values.</p>`;
+  $("pane-eval").innerHTML=h;const pb=$("prevBox");if(pb)pb.onchange=renderEval;}
+
+function renderPop(){const q=a=>{const s=a.map(x=>x.amt).sort((x,y)=>x-y);return[0,.25,.5,.75,1].map(p=>{const i=p*(s.length-1),lo=Math.floor(i);return s.length?s[lo]+(s[Math.min(lo+1,s.length-1)]-s[lo])*(i-lo):0;});};
+  const a=q(M.pop),b=q(M.sample);let h=`<div><h2>Distribution</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th>Statistic</th><th class="n">Population</th><th class="n">Sample</th></tr></thead><tbody>${["Minimum","Q1","Median","Q3","Maximum"].map((k,i)=>`<tr><td>${k}</td><td class="n">${money(a[i])}</td><td class="n">${money(b[i])}</td></tr>`).join("")}</tbody></table></div></div>`;
+  if(M.exc.length)h+=`<div><h2>Excluded rows (${M.exc.length})</h2><div class="tw" style="margin-top:8px"><table><thead><tr><th>Reason</th><th>ID</th><th>Name</th><th class="n">Amount as read</th></tr></thead><tbody>${M.exc.map(x=>`<tr><td>${esc(x.why)}</td><td class="id">${esc(x.id||"(blank)")}</td><td>${esc(x.name)}</td><td class="n">${esc(x.raw[M.ca])}</td></tr>`).join("")}</tbody></table></div></div>`;
+  $("pane-pop").innerHTML=h;}
+
+demo();
+</script>
+
+</body>
+</html>
