@@ -1,0 +1,20 @@
+# Python environments
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated workpapers and client data — never commit real engagement files
+Audit_Workpaper*.csv
+Audit_Workpaper*.xlsx
+audit_workpaper.xlsx
+data/
+*.local.xlsx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
